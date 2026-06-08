@@ -675,6 +675,7 @@ function App() {
   const [activatingLlmId, setActivatingLlmId] = useState<number | null>(null);
   const [diagnosticsTab, setDiagnosticsTab] = useState<DiagnosticsTab>("runtime");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [llmOpen, setLlmOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceState>({
     video: null,
@@ -1303,8 +1304,33 @@ function App() {
     <main className="app-shell">
       <Header
         diagnosticsOpen={diagnosticsOpen}
-        onDiagnosticsToggle={() => setDiagnosticsOpen((current) => !current)}
+        llmConfig={llmConfig}
+        llmOpen={llmOpen}
+        onDiagnosticsToggle={() => {
+          setDiagnosticsOpen((current) => !current);
+          setLlmOpen(false);
+        }}
+        onLlmToggle={() => {
+          setLlmOpen((current) => !current);
+          setDiagnosticsOpen(false);
+        }}
       />
+      {llmOpen && (
+        <LlmConfigPanel
+          activatingProviderId={activatingLlmId}
+          config={llmConfig}
+          form={llmForm}
+          isSaving={isSavingLlm}
+          isTesting={isTestingLlm}
+          onActivateProvider={handleActivateLlmProvider}
+          onChange={setLlmForm}
+          onClose={() => setLlmOpen(false)}
+          onSave={handleSaveLlmConfig}
+          onTest={handleTestLlmConnection}
+          providers={llmProviders}
+          status={llmStatus}
+        />
+      )}
       {diagnosticsOpen && (
         <DiagnosticsPanel
           activeTab={diagnosticsTab}
@@ -1355,19 +1381,6 @@ function App() {
             onOptionsChange={setUrlImportOptions}
             onUrlChange={setVideoUrl}
             video={workspace.video}
-          />
-          <LlmConfigPanel
-            config={llmConfig}
-            form={llmForm}
-            providers={llmProviders}
-            activatingProviderId={activatingLlmId}
-            isSaving={isSavingLlm}
-            isTesting={isTestingLlm}
-            onActivateProvider={handleActivateLlmProvider}
-            onChange={setLlmForm}
-            onSave={handleSaveLlmConfig}
-            onTest={handleTestLlmConnection}
-            status={llmStatus}
           />
           <VideoLibraryPanel
             activeVideoId={workspace.video?.id ?? null}
@@ -1756,11 +1769,19 @@ const diagnosticTabs: { id: DiagnosticsTab; label: string; meta: string }[] = [
 
 function Header({
   diagnosticsOpen,
+  llmConfig,
+  llmOpen,
   onDiagnosticsToggle,
+  onLlmToggle,
 }: {
   diagnosticsOpen: boolean;
+  llmConfig: LlmConfig | null;
+  llmOpen: boolean;
   onDiagnosticsToggle: () => void;
+  onLlmToggle: () => void;
 }) {
+  const llmReady = Boolean(llmConfig?.enabled && llmConfig.configured);
+
   return (
     <header className="app-header">
       <div>
@@ -1771,12 +1792,47 @@ function Header({
         <h1>OmniVid 工作台</h1>
       </div>
       <div className="header-metrics" aria-label="系统指标">
+        <HeaderLlmButton
+          active={llmOpen}
+          ready={llmReady}
+          model={llmConfig?.model}
+          onClick={onLlmToggle}
+        />
         <HeaderDiagnosticsButton
           active={diagnosticsOpen}
           onClick={onDiagnosticsToggle}
         />
       </div>
     </header>
+  );
+}
+
+function HeaderLlmButton({
+  active,
+  model,
+  onClick,
+  ready,
+}: {
+  active: boolean;
+  model?: string;
+  onClick: () => void;
+  ready: boolean;
+}) {
+  return (
+    <button
+      aria-expanded={active}
+      className={`metric top-popover-trigger llm-trigger ${active ? "active" : ""} ${ready ? "ready" : ""}`}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="metric-icon">
+        <KeyRound size={17} />
+      </span>
+      <span>
+        <strong>云端 LLM</strong>
+        <small>{ready ? model ?? "已配置" : "添加 API Key"}</small>
+      </span>
+    </button>
   );
 }
 
@@ -1790,7 +1846,7 @@ function HeaderDiagnosticsButton({
   return (
     <button
       aria-expanded={active}
-      className={`metric diagnostics-trigger ${active ? "active" : ""}`}
+      className={`metric top-popover-trigger diagnostics-trigger ${active ? "active" : ""}`}
       onClick={onClick}
       type="button"
     >
@@ -2021,6 +2077,7 @@ function LlmConfigPanel({
   isTesting,
   onActivateProvider,
   onChange,
+  onClose,
   onSave,
   onTest,
   providers,
@@ -2033,6 +2090,7 @@ function LlmConfigPanel({
   isTesting: boolean;
   onActivateProvider: (providerId: number) => void;
   onChange: (next: LlmFormState) => void;
+  onClose: () => void;
   onSave: () => void;
   onTest: () => void;
   providers: LlmProvider[];
@@ -2053,6 +2111,9 @@ function LlmConfigPanel({
         <KeyRound size={19} />
         <h2>云端 LLM</h2>
         <span className={`panel-count ${ready ? "ready" : ""}`}>{stateLabel}</span>
+        <button className="llm-close" onClick={onClose} type="button">
+          关闭
+        </button>
         {ready && (
           <button className="panel-action" onClick={() => setIsEditing((current) => !current)} type="button">
             {showEditor ? "收起" : "配置"}

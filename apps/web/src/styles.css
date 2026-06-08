@@ -120,15 +120,20 @@ h2 {
     0 12px 34px rgba(0, 0, 0, 0.18);
 }
 
-.diagnostics-trigger {
+.top-popover-trigger {
   border: 0;
   text-align: left;
 }
 
-.diagnostics-trigger.active {
+.top-popover-trigger.active {
   box-shadow:
     inset 0 0 0 1px var(--line-strong),
     0 16px 42px rgba(45, 212, 191, 0.16);
+}
+
+.llm-trigger.ready .metric-icon {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .metric-icon {
@@ -656,8 +661,30 @@ h2 {
   background: var(--accent-soft);
 }
 
+.llm-panel {
+  position: absolute;
+  top: 100px;
+  right: 0;
+  z-index: 30;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(660px, calc(100vh - 118px));
+  overflow: auto;
+  background: rgba(11, 17, 24, 0.96);
+}
+
 .llm-panel .panel-action {
   margin-left: 0;
+}
+
+.llm-close {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 9px;
+  color: var(--danger);
+  background: rgba(240, 133, 114, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(240, 133, 114, 0.2);
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .llm-switch-row {
@@ -2023,7 +2050,8 @@ h2 {
     grid-template-columns: 1fr 1fr;
   }
 
-  .diagnostics-panel {
+  .diagnostics-panel,
+  .llm-panel {
     top: 124px;
     width: min(480px, calc(100vw - 32px));
   }
@@ -2047,7 +2075,8 @@ h2 {
     width: 100%;
   }
 
-  .diagnostics-panel {
+  .diagnostics-panel,
+  .llm-panel {
     position: static;
     width: 100%;
     max-height: none;
