@@ -147,9 +147,10 @@ h2 {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(250px, 300px) minmax(420px, 1fr) minmax(280px, 360px);
-  gap: 16px;
+  grid-template-columns: minmax(280px, 320px) minmax(560px, 1fr) minmax(340px, 400px);
+  gap: 18px;
   align-items: start;
+  margin-bottom: 20px;
 }
 
 .left-rail,
@@ -157,6 +158,90 @@ h2 {
 .center-stage {
   display: grid;
   gap: 16px;
+  align-content: start;
+}
+
+.diagnostics-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.diagnostics-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 2px;
+}
+
+.diagnostics-head h2 {
+  margin-top: 6px;
+  color: var(--text-strong);
+  font-family: Georgia, "Times New Roman", "Songti SC", serif;
+  font-size: 24px;
+}
+
+.diagnostics-head p {
+  max-width: 680px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.diagnostics-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(112px, 1fr));
+  gap: 8px;
+  min-width: min(560px, 100%);
+}
+
+.diagnostics-tabs button {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+  border-radius: 18px;
+  padding: 10px 12px;
+  color: var(--muted);
+  text-align: left;
+  background: rgba(19, 29, 39, 0.78);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.diagnostics-tabs button.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.diagnostics-tabs strong,
+.diagnostics-tabs small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-tabs strong {
+  color: inherit;
+  font-size: 13px;
+}
+
+.diagnostics-tabs small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.diagnostics-grid.ai {
+  grid-template-columns: minmax(300px, 380px) minmax(420px, 1fr);
 }
 
 .panel,
@@ -493,6 +578,10 @@ h2 {
 .llm-panel .panel-count.ready {
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+.llm-panel .panel-action {
+  margin-left: 0;
 }
 
 .llm-switch-row {
@@ -1850,12 +1939,25 @@ h2 {
 
 @media (max-width: 1180px) {
   .workspace-grid {
-    grid-template-columns: 280px 1fr;
+    grid-template-columns: 300px 1fr;
   }
 
   .right-rail {
     grid-column: 1 / -1;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .diagnostics-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .diagnostics-tabs {
+    min-width: 0;
+  }
+
+  .diagnostics-grid.ai {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1872,7 +1974,9 @@ h2 {
 
   .header-metrics,
   .workspace-grid,
-  .right-rail {
+  .right-rail,
+  .diagnostics-tabs,
+  .diagnostics-grid {
     grid-template-columns: 1fr;
     width: 100%;
   }

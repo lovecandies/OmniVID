@@ -347,6 +347,7 @@ type ChatMessage = {
 };
 
 type AgentMode = "video" | "knowledgeBase";
+type DiagnosticsTab = "runtime" | "ai" | "data" | "recovery";
 
 type WorkspaceState = {
   video: VideoAsset | null;
@@ -672,6 +673,7 @@ function App() {
   const [isSavingLlm, setIsSavingLlm] = useState(false);
   const [isTestingLlm, setIsTestingLlm] = useState(false);
   const [activatingLlmId, setActivatingLlmId] = useState<number | null>(null);
+  const [diagnosticsTab, setDiagnosticsTab] = useState<DiagnosticsTab>("runtime");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceState>({
     video: null,
@@ -1330,68 +1332,12 @@ function App() {
             onTest={handleTestLlmConnection}
             status={llmStatus}
           />
-          <RuntimeStatusPanel
-            isRebuildingVectorIndex={isRebuildingVectorIndex}
-            onRebuildVectorIndex={handleRebuildVectorIndex}
-            rebuildStatus={vectorIndexStatus}
-            status={runtimeStatus}
-          />
-          <VectorStoreInspectorPanel
-            inspect={vectorIndexInspect}
-            onRefresh={refreshVectorIndexInspect}
-          />
-          <ThreadPoolInspectorPanel
-            inspect={threadPoolInspect}
-            onRefresh={refreshThreadPoolInspect}
-          />
-          <SseProgressInspectorPanel inspect={sseInspect} />
-          <AsrDiagnosticPanel
-            diagnostic={asrDiagnostic}
-            onRefresh={() => refreshAsrDiagnostic()}
-          />
-          <MysqlIndexInspectorPanel
-            plans={mysqlExplain}
-            onRefresh={refreshMysqlExplain}
-          />
-          <RecoveryPanel
-            failedJobs={failedJobs}
-            isLoading={isLoading}
-            onRefresh={refreshFailedJobs}
-            onRetry={handleRetryFailedJob}
-            onSelect={loadVideo}
-          />
-          <RedisKeyInspectorPanel
-            inspect={redisInspect}
-            onRefresh={refreshRedisInspect}
-          />
-          <RedisHooksPanel
-            context={agentContext}
-            latestMessage={latestAgentMessage}
-            status={runtimeStatus}
-          />
-          <RetrievalInspectorPanel
-            latestMessage={latestAgentMessage}
-            status={runtimeStatus}
-          />
           <VideoLibraryPanel
             activeVideoId={workspace.video?.id ?? null}
             onSelect={loadVideo}
             videos={videos}
           />
           <PipelinePanel steps={steps} />
-          <HookPanel
-            job={workspace.job}
-            summaries={workspace.summaries}
-            transcripts={workspace.transcripts}
-            video={workspace.video}
-          />
-          <DatabaseStatePanel
-            job={workspace.job}
-            runtime={runtimeStatus}
-            summaries={workspace.summaries}
-            transcripts={workspace.transcripts}
-            video={workspace.video}
-          />
         </aside>
 
         <section className="center-stage" aria-label="视频与字幕">
@@ -1432,7 +1378,205 @@ function App() {
           />
         </aside>
       </section>
+      <DiagnosticsPanel
+        activeTab={diagnosticsTab}
+        agentContext={agentContext}
+        asrDiagnostic={asrDiagnostic}
+        failedJobs={failedJobs}
+        isLoading={isLoading}
+        isRebuildingVectorIndex={isRebuildingVectorIndex}
+        job={workspace.job}
+        latestAgentMessage={latestAgentMessage}
+        mysqlExplain={mysqlExplain}
+        onRebuildVectorIndex={handleRebuildVectorIndex}
+        onRefreshAsr={() => refreshAsrDiagnostic()}
+        onRefreshFailedJobs={refreshFailedJobs}
+        onRefreshMysql={refreshMysqlExplain}
+        onRefreshRedis={refreshRedisInspect}
+        onRefreshThreadPool={refreshThreadPoolInspect}
+        onRefreshVectorStore={refreshVectorIndexInspect}
+        onRetryFailedJob={handleRetryFailedJob}
+        onSelectFailedVideo={loadVideo}
+        onTabChange={setDiagnosticsTab}
+        rebuildStatus={vectorIndexStatus}
+        redisInspect={redisInspect}
+        runtimeStatus={runtimeStatus}
+        sseInspect={sseInspect}
+        summaries={workspace.summaries}
+        threadPoolInspect={threadPoolInspect}
+        transcripts={workspace.transcripts}
+        vectorIndexInspect={vectorIndexInspect}
+        video={workspace.video}
+      />
     </main>
+  );
+}
+
+function DiagnosticsPanel({
+  activeTab,
+  agentContext,
+  asrDiagnostic,
+  failedJobs,
+  isLoading,
+  isRebuildingVectorIndex,
+  job,
+  latestAgentMessage,
+  mysqlExplain,
+  onRebuildVectorIndex,
+  onRefreshAsr,
+  onRefreshFailedJobs,
+  onRefreshMysql,
+  onRefreshRedis,
+  onRefreshThreadPool,
+  onRefreshVectorStore,
+  onRetryFailedJob,
+  onSelectFailedVideo,
+  onTabChange,
+  rebuildStatus,
+  redisInspect,
+  runtimeStatus,
+  sseInspect,
+  summaries,
+  threadPoolInspect,
+  transcripts,
+  vectorIndexInspect,
+  video,
+}: {
+  activeTab: DiagnosticsTab;
+  agentContext: AgentContext | null;
+  asrDiagnostic: AsrDiagnostic | null;
+  failedJobs: FailedJob[];
+  isLoading: boolean;
+  isRebuildingVectorIndex: boolean;
+  job: ProcessingJob | null;
+  latestAgentMessage: ChatMessage | undefined;
+  mysqlExplain: MysqlExplainPlan[];
+  onRebuildVectorIndex: () => void;
+  onRefreshAsr: () => void;
+  onRefreshFailedJobs: () => void;
+  onRefreshMysql: () => void;
+  onRefreshRedis: () => void;
+  onRefreshThreadPool: () => void;
+  onRefreshVectorStore: () => void;
+  onRetryFailedJob: (videoId: number) => void;
+  onSelectFailedVideo: (videoId: number) => void;
+  onTabChange: (tab: DiagnosticsTab) => void;
+  rebuildStatus: string;
+  redisInspect: RedisInspectResponse | null;
+  runtimeStatus: RuntimeStatus | null;
+  sseInspect: SseInspectState;
+  summaries: SummaryAsset[];
+  threadPoolInspect: ThreadPoolInspectResponse | null;
+  transcripts: ApiTranscriptSegment[];
+  vectorIndexInspect: VectorIndexStatusResponse | null;
+  video: VideoAsset | null;
+}) {
+  return (
+    <section className="diagnostics-panel" aria-label="面试钩子诊断台">
+      <div className="diagnostics-head">
+        <div>
+          <div className="eyebrow">
+            <ShieldCheck size={16} />
+            Interview Hooks
+          </div>
+          <h2>诊断台</h2>
+          <p>把 MySQL、Redis、RAG、ASR、线程池和补偿链路收纳到这里，主流程保持清爽。</p>
+        </div>
+        <div className="diagnostics-tabs" role="tablist" aria-label="诊断分类">
+          {diagnosticTabs.map((tab) => (
+            <button
+              aria-selected={activeTab === tab.id}
+              className={activeTab === tab.id ? "active" : ""}
+              key={tab.id}
+              onClick={() => onTabChange(tab.id)}
+              role="tab"
+              type="button"
+            >
+              <strong>{tab.label}</strong>
+              <small>{tab.meta}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={`diagnostics-grid ${activeTab}`}>
+        {activeTab === "runtime" && (
+          <>
+            <RuntimeStatusPanel
+              isRebuildingVectorIndex={isRebuildingVectorIndex}
+              onRebuildVectorIndex={onRebuildVectorIndex}
+              rebuildStatus={rebuildStatus}
+              status={runtimeStatus}
+            />
+            <ThreadPoolInspectorPanel
+              inspect={threadPoolInspect}
+              onRefresh={onRefreshThreadPool}
+            />
+            <SseProgressInspectorPanel inspect={sseInspect} />
+          </>
+        )}
+
+        {activeTab === "ai" && (
+          <>
+            <VectorStoreInspectorPanel
+              inspect={vectorIndexInspect}
+              onRefresh={onRefreshVectorStore}
+            />
+            <RetrievalInspectorPanel
+              latestMessage={latestAgentMessage}
+              status={runtimeStatus}
+            />
+          </>
+        )}
+
+        {activeTab === "data" && (
+          <>
+            <MysqlIndexInspectorPanel
+              plans={mysqlExplain}
+              onRefresh={onRefreshMysql}
+            />
+            <RedisKeyInspectorPanel
+              inspect={redisInspect}
+              onRefresh={onRefreshRedis}
+            />
+            <RedisHooksPanel
+              context={agentContext}
+              latestMessage={latestAgentMessage}
+              status={runtimeStatus}
+            />
+            <DatabaseStatePanel
+              job={job}
+              runtime={runtimeStatus}
+              summaries={summaries}
+              transcripts={transcripts}
+              video={video}
+            />
+          </>
+        )}
+
+        {activeTab === "recovery" && (
+          <>
+            <AsrDiagnosticPanel
+              diagnostic={asrDiagnostic}
+              onRefresh={onRefreshAsr}
+            />
+            <RecoveryPanel
+              failedJobs={failedJobs}
+              isLoading={isLoading}
+              onRefresh={onRefreshFailedJobs}
+              onRetry={onRetryFailedJob}
+              onSelect={onSelectFailedVideo}
+            />
+            <HookPanel
+              job={job}
+              summaries={summaries}
+              transcripts={transcripts}
+              video={video}
+            />
+          </>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1580,6 +1724,13 @@ const summaryTemplates = [
   { type: "BLOG_OUTLINE", label: "博客大纲" },
   { type: "PPT_OUTLINE", label: "PPT 大纲" },
   { type: "INTERVIEW_HOOKS", label: "面试钩子" },
+];
+
+const diagnosticTabs: { id: DiagnosticsTab; label: string; meta: string }[] = [
+  { id: "runtime", label: "Runtime", meta: "线程 / SSE" },
+  { id: "ai", label: "AI/RAG", meta: "向量 / 检索" },
+  { id: "data", label: "Data", meta: "MySQL / Redis" },
+  { id: "recovery", label: "Recovery", meta: "ASR / 补偿" },
 ];
 
 function Header() {
@@ -1840,6 +1991,8 @@ function LlmConfigPanel({
     : config?.enabled
       ? "等待 Key"
       : "未启用";
+  const [isEditing, setIsEditing] = useState(false);
+  const showEditor = !ready || isEditing;
 
   return (
     <section className="panel llm-panel">
@@ -1847,72 +2000,81 @@ function LlmConfigPanel({
         <KeyRound size={19} />
         <h2>云端 LLM</h2>
         <span className={`panel-count ${ready ? "ready" : ""}`}>{stateLabel}</span>
+        {ready && (
+          <button className="panel-action" onClick={() => setIsEditing((current) => !current)} type="button">
+            {showEditor ? "收起" : "配置"}
+          </button>
+        )}
       </div>
-      <div className="llm-switch-row">
-        <label>
-          <input
-            checked={form.enabled}
-            onChange={(event) => onChange({ ...form, enabled: event.currentTarget.checked })}
-            type="checkbox"
-          />
-          <span>启用</span>
-        </label>
-        <small>{config?.apiKeyMasked || "未保存 Key"}</small>
-      </div>
-      <div className="llm-fields">
-        <label>
-          <span>名称</span>
-          <input
-            onChange={(event) => onChange({ ...form, providerName: event.currentTarget.value })}
-            placeholder="DeepSeek"
-            value={form.providerName}
-          />
-        </label>
-        <label>
-          <span>Base URL</span>
-          <input
-            onChange={(event) => onChange({ ...form, baseUrl: event.currentTarget.value })}
-            placeholder="https://api.deepseek.com/v1"
-            value={form.baseUrl}
-          />
-        </label>
-        <label>
-          <span>模型</span>
-          <input
-            onChange={(event) => onChange({ ...form, model: event.currentTarget.value })}
-            placeholder="deepseek-chat"
-            value={form.model}
-          />
-        </label>
-        <label>
-          <span>API Key</span>
-          <input
-            autoComplete="off"
-            onChange={(event) => onChange({ ...form, apiKey: event.currentTarget.value })}
-            placeholder={config?.configured ? config.apiKeyMasked : "sk-..."}
-            type="password"
-            value={form.apiKey}
-          />
-        </label>
-        <label>
-          <span>超时</span>
-          <input
-            min={5}
-            max={180}
-            onChange={(event) => onChange({ ...form, timeoutSeconds: Number(event.currentTarget.value) })}
-            type="number"
-            value={form.timeoutSeconds}
-          />
-        </label>
-      </div>
-      <div className="llm-actions">
-        <button disabled={isSaving} onClick={onSave} type="button">
-          {isSaving ? "保存中" : "保存并启用"}
-        </button>
-        <button disabled={isTesting || !ready} onClick={onTest} type="button">
-          {isTesting ? "测试中" : "测试连接"}
-        </button>
-      </div>
+      {showEditor && (
+        <>
+          <div className="llm-switch-row">
+            <label>
+              <input
+                checked={form.enabled}
+                onChange={(event) => onChange({ ...form, enabled: event.currentTarget.checked })}
+                type="checkbox"
+              />
+              <span>启用</span>
+            </label>
+            <small>{config?.apiKeyMasked || "未保存 Key"}</small>
+          </div>
+          <div className="llm-fields">
+            <label>
+              <span>名称</span>
+              <input
+                onChange={(event) => onChange({ ...form, providerName: event.currentTarget.value })}
+                placeholder="DeepSeek"
+                value={form.providerName}
+              />
+            </label>
+            <label>
+              <span>Base URL</span>
+              <input
+                onChange={(event) => onChange({ ...form, baseUrl: event.currentTarget.value })}
+                placeholder="https://api.deepseek.com/v1"
+                value={form.baseUrl}
+              />
+            </label>
+            <label>
+              <span>模型</span>
+              <input
+                onChange={(event) => onChange({ ...form, model: event.currentTarget.value })}
+                placeholder="deepseek-chat"
+                value={form.model}
+              />
+            </label>
+            <label>
+              <span>API Key</span>
+              <input
+                autoComplete="off"
+                onChange={(event) => onChange({ ...form, apiKey: event.currentTarget.value })}
+                placeholder={config?.configured ? config.apiKeyMasked : "sk-..."}
+                type="password"
+                value={form.apiKey}
+              />
+            </label>
+            <label>
+              <span>超时</span>
+              <input
+                min={5}
+                max={180}
+                onChange={(event) => onChange({ ...form, timeoutSeconds: Number(event.currentTarget.value) })}
+                type="number"
+                value={form.timeoutSeconds}
+              />
+            </label>
+          </div>
+          <div className="llm-actions">
+            <button disabled={isSaving} onClick={onSave} type="button">
+              {isSaving ? "保存中" : "保存并启用"}
+            </button>
+            <button disabled={isTesting || !ready} onClick={onTest} type="button">
+              {isTesting ? "测试中" : "测试连接"}
+            </button>
+          </div>
+        </>
+      )}
       <div className="llm-provider-list" aria-label="已保存 LLM Provider">
         {providers.length === 0 ? (
           <div className="llm-provider-empty">暂无已保存 Provider</div>

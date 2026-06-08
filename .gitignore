@@ -26,6 +26,7 @@ apps/web/tsconfig.tsbuildinfo
 apps/api/storage/
 bilibili/
 备份/
+artifacts/
 
 # Downloaded tools, model binaries, and large archives
 tools/
