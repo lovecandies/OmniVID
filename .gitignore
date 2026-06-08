@@ -1,0 +1,50 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# Logs
+*.log
+*.err.log
+
+# Java / Maven
+target/
+apps/api/target/
+apps/api/.mvn/wrapper/maven-wrapper.jar
+
+# Node / Vite
+node_modules/
+apps/web/node_modules/
+apps/web/dist/
+apps/web/tsconfig.tsbuildinfo
+
+# Runtime storage and generated media
+apps/api/storage/
+bilibili/
+备份/
+
+# Downloaded tools, model binaries, and large archives
+tools/
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.bin
+*.dll
+*.exe
+
+# Local env and secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Databases / caches
+*.db
+*.sqlite
+*.sqlite3
+*.h2.db

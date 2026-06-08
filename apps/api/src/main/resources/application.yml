@@ -1,0 +1,80 @@
+spring:
+  application:
+    name: omnivid-api
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+  datasource:
+    url: jdbc:h2:mem:omnivid;MODE=MySQL;DATABASE_TO_UPPER=false;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  sql:
+    init:
+      mode: always
+  servlet:
+    multipart:
+      max-file-size: 2GB
+      max-request-size: 2GB
+server:
+  port: 8080
+
+omnivid:
+  storage-root: ${OMNIVID_STORAGE_ROOT:${user.dir}/storage}
+  ffmpeg:
+    path: ${OMNIVID_FFMPEG_PATH:E:/video/tools/ffmpeg/runtime/ffmpeg-n7.1-latest-win64-gpl-shared-7.1/bin/ffmpeg.exe}
+    timeout: 60s
+  url-import:
+    ytdlp-path: ${OMNIVID_YTDLP_PATH:E:/video/tools/url/yt-dlp.exe}
+    timeout: ${OMNIVID_YTDLP_TIMEOUT:300s}
+  asr:
+    path: ${OMNIVID_ASR_PATH:E:/video/tools/asr/runtime/Release/whisper-cli.exe}
+    model: ${OMNIVID_ASR_MODEL:E:/video/tools/asr/ggml-tiny.bin}
+    timeout: 180s
+  llm:
+    enabled: ${OMNIVID_LLM_ENABLED:false}
+    api-key: ${OMNIVID_LLM_API_KEY:}
+    base-url: ${OMNIVID_LLM_BASE_URL:https://api.deepseek.com/v1}
+    model: ${OMNIVID_LLM_MODEL:deepseek-chat}
+    timeout: ${OMNIVID_LLM_TIMEOUT:60s}
+  dedupe-lock:
+    mode: local
+  progress-cache:
+    mode: local
+  agent-rate-limit:
+    mode: local
+  agent-answer-cache:
+    mode: local
+  agent-short-term-memory:
+    mode: local
+  vector-store:
+    mode: memory
+    qdrant:
+      base-url: ${OMNIVID_QDRANT_URL:http://localhost:6333}
+      collection: ${OMNIVID_QDRANT_COLLECTION:omnivid_transcript_segments}
+      timeout: ${OMNIVID_QDRANT_TIMEOUT:5s}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: redis
+  autoconfigure:
+    exclude: []
+  data:
+    redis:
+      host: ${OMNIVID_REDIS_HOST:localhost}
+      port: ${OMNIVID_REDIS_PORT:6379}
+
+omnivid:
+  dedupe-lock:
+    mode: redis
+  progress-cache:
+    mode: redis
+  agent-rate-limit:
+    mode: redis
+  agent-answer-cache:
+    mode: redis
+  agent-short-term-memory:
+    mode: redis
