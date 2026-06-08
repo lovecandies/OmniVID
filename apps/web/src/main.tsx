@@ -3104,10 +3104,10 @@ function VideoPanel({
             <Play size={26} fill="currentColor" />
           </div>
         )}
-        <div className="video-caption">
-          当前引用片段 · {formatTime(activeTranscript.startMs)}
-          <strong>{activeTranscript.content}</strong>
-        </div>
+      </div>
+      <div className="video-caption">
+        当前引用片段 · {formatTime(activeTranscript.startMs)}
+        <strong>{activeTranscript.content}</strong>
       </div>
       <div className="timeline">
         <span style={{ width: video ? "100%" : "12%" }} />

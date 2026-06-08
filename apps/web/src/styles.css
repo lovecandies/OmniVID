@@ -1420,13 +1420,9 @@ h2 {
 }
 
 .video-caption {
-  position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: 18px;
-  z-index: 2;
   display: grid;
   gap: 6px;
+  margin: 0 18px 12px;
   padding: 14px 16px;
   border-radius: 18px;
   color: var(--muted);
@@ -1462,6 +1458,24 @@ h2 {
 .transcript-list {
   display: grid;
   gap: 8px;
+  max-height: 336px;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+
+.transcript-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.transcript-list::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(147, 163, 173, 0.08);
+}
+
+.transcript-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(94, 234, 212, 0.34);
 }
 
 .transcript-search {
