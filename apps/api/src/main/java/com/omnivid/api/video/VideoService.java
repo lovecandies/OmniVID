@@ -271,7 +271,7 @@ public class VideoService {
         ProcessingJob latestJob = jobs.findLatestByVideoId(videoId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Processing job not found"));
         if (!"FAILED".equals(latestJob.status())) {
-            throw new ApiException(HttpStatus.CONFLICT, "Only failed processing jobs can be retried");
+            throw retryNotAllowed(latestJob);
         }
 
         StoredVideoFile storedFile = storage.loadStoredFile(video.storagePath(), video.originalName(), video.md5());
@@ -280,6 +280,23 @@ public class VideoService {
         cacheProgress(video.id(), retryJob);
         processingExecutor.execute(() -> processStoredVideo(video.id(), retryJob.id(), storedFile));
         return new CompleteUploadResponse(false, videos.findById(video.id()).orElseThrow(), retryJob);
+    }
+
+    private ApiException retryNotAllowed(ProcessingJob job) {
+        String suggestion = switch (job.status()) {
+            case "DONE" -> "该视频已经解析完成，不需要进入补偿队列。重复上传同一文件会通过 MD5 去重直接复用结果。";
+            case "RUNNING" -> "该视频仍在解析中，请等待 SSE 进度完成；如果最终失败，Recovery Queue 会出现可重试项。";
+            default -> "只有最新 processing_job.status=FAILED 的任务允许重试，请先刷新视频详情和 Recovery Queue。";
+        };
+        return new ApiException(
+                HttpStatus.CONFLICT,
+                "Only failed processing jobs can be retried",
+                suggestion,
+                "job#" + job.id()
+                        + ", status=" + job.status()
+                        + ", step=" + job.currentStep()
+                        + ", retryCount=" + job.retryCount()
+        );
     }
 
     public VideoDetailResponse detail(long videoId) {

@@ -2346,6 +2346,7 @@ function RecoveryPanel({
           refresh
         </button>
       </div>
+      <div className="library-empty">Only latest FAILED jobs can enter compensation retry; DONE jobs rely on MD5 reuse.</div>
       {failedJobs.length === 0 ? (
         <div className="library-empty">No failed DAG jobs waiting for compensation.</div>
       ) : (
