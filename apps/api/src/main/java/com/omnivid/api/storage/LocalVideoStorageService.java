@@ -94,6 +94,10 @@ public class LocalVideoStorageService {
         return new FileSystemResource(resolveLocalPath(storagePath));
     }
 
+    public Path resolveLocalFile(String storagePath) {
+        return resolveLocalPath(storagePath);
+    }
+
     public StoredVideoFile loadStoredFile(String storagePath, String originalName, String md5) {
         Path localPath = resolveLocalPath(storagePath);
         try {

@@ -40,6 +40,14 @@ public class TranscriptRepository {
         return count != null && count > 0;
     }
 
+    public int countByVideoId(long videoId) {
+        Integer count = jdbc.sql("SELECT COUNT(*) FROM transcript_segment WHERE video_id = :videoId")
+                .param("videoId", videoId)
+                .query(Integer.class)
+                .single();
+        return count == null ? 0 : count;
+    }
+
     public List<TranscriptSegment> listByVideoId(long videoId) {
         return jdbc.sql("""
                 SELECT * FROM transcript_segment

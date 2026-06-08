@@ -307,6 +307,27 @@ type VectorIndexStatusResponse = {
   message: string;
 };
 
+type AsrDiagnostic = {
+  videoId: number;
+  originalName: string;
+  videoStatus: string;
+  asrPath: string;
+  modelPath: string;
+  modelExists: boolean;
+  audioExists: boolean;
+  audioSizeBytes: number;
+  asrJsonExists: boolean;
+  asrJsonSizeBytes: number;
+  asrLogExists: boolean;
+  asrLogSizeBytes: number;
+  transcriptCount: number;
+  lastJobStep: string;
+  lastJobStatus: string;
+  lastJobError?: string | null;
+  ffmpegLogTail: string;
+  asrLogTail: string;
+};
+
 type UrlImportOptions = {
   cookiesFile: string;
   cookiesFromBrowser: string;
@@ -593,6 +614,10 @@ async function getVectorIndexStatus() {
   return apiJsonRequest<VectorIndexStatusResponse>("/api/vector-index/status");
 }
 
+async function getAsrDiagnostic(videoId: number) {
+  return apiJsonRequest<AsrDiagnostic>(`/api/videos/${videoId}/asr/diagnostics`);
+}
+
 async function rebuildVectorIndex() {
   return apiJsonRequest<VectorIndexRebuildResponse>("/api/vector-index/rebuild", {
     method: "POST",
@@ -619,6 +644,7 @@ function App() {
   const [redisInspect, setRedisInspect] = useState<RedisInspectResponse | null>(null);
   const [threadPoolInspect, setThreadPoolInspect] = useState<ThreadPoolInspectResponse | null>(null);
   const [vectorIndexInspect, setVectorIndexInspect] = useState<VectorIndexStatusResponse | null>(null);
+  const [asrDiagnostic, setAsrDiagnostic] = useState<AsrDiagnostic | null>(null);
   const [sseInspect, setSseInspect] = useState<SseInspectState>({
     status: "idle",
     url: "",
@@ -678,6 +704,14 @@ function App() {
     refreshLlmConfig();
     refreshRuntimeStatus();
   }, []);
+
+  useEffect(() => {
+    if (workspace.video) {
+      refreshAsrDiagnostic(workspace.video.id);
+    } else {
+      setAsrDiagnostic(null);
+    }
+  }, [workspace.video?.id, workspace.job?.status, workspace.transcripts.length]);
 
   useEffect(() => {
     if (!workspace.video || !workspace.job || workspace.job.status !== "RUNNING") {
@@ -856,6 +890,18 @@ function App() {
       setVectorIndexInspect(await getVectorIndexStatus());
     } catch {
       setVectorIndexInspect(null);
+    }
+  }
+
+  async function refreshAsrDiagnostic(videoId = workspace.video?.id) {
+    if (!videoId) {
+      setAsrDiagnostic(null);
+      return;
+    }
+    try {
+      setAsrDiagnostic(await getAsrDiagnostic(videoId));
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : "ASR diagnostics load failed");
     }
   }
 
@@ -1299,6 +1345,10 @@ function App() {
             onRefresh={refreshThreadPoolInspect}
           />
           <SseProgressInspectorPanel inspect={sseInspect} />
+          <AsrDiagnosticPanel
+            diagnostic={asrDiagnostic}
+            onRefresh={() => refreshAsrDiagnostic()}
+          />
           <MysqlIndexInspectorPanel
             plans={mysqlExplain}
             onRefresh={refreshMysqlExplain}
@@ -2152,6 +2202,72 @@ function SseProgressInspectorPanel({ inspect }: { inspect: SseInspectState }) {
           detail="EventSource error count"
         />
       </div>
+    </section>
+  );
+}
+
+function AsrDiagnosticPanel({
+  diagnostic,
+  onRefresh,
+}: {
+  diagnostic: AsrDiagnostic | null;
+  onRefresh: () => void;
+}) {
+  const ready = Boolean(diagnostic?.asrJsonExists && diagnostic.transcriptCount > 0);
+  return (
+    <section className="panel compact-panel">
+      <div className="panel-title">
+        <FileText size={19} />
+        <h2>ASR Diagnostic</h2>
+        <span className={`panel-count ${ready ? "ready" : ""}`}>
+          {diagnostic ? diagnostic.lastJobStatus : "waiting"}
+        </span>
+        <button className="panel-action" onClick={onRefresh} type="button">
+          refresh
+        </button>
+      </div>
+      {!diagnostic ? (
+        <div className="library-empty">Select a video to inspect audio.wav, asr.json and whisper logs.</div>
+      ) : (
+        <div className="threadpool-grid">
+          <RuntimeCell
+            label="Model"
+            tone={diagnostic.modelExists ? "done" : "warn"}
+            value={diagnostic.modelExists ? "ready" : "missing"}
+            detail={diagnostic.modelPath}
+          />
+          <RuntimeCell
+            label="Audio"
+            tone={diagnostic.audioExists ? "done" : "warn"}
+            value={diagnostic.audioExists ? `${bytesToMb(diagnostic.audioSizeBytes)} MB` : "missing"}
+            detail="audio.wav from ffmpeg"
+          />
+          <RuntimeCell
+            label="ASR JSON"
+            tone={diagnostic.asrJsonExists ? "done" : "warn"}
+            value={diagnostic.asrJsonExists ? `${bytesToMb(diagnostic.asrJsonSizeBytes)} MB` : "missing"}
+            detail={`${diagnostic.transcriptCount} transcript rows`}
+          />
+          <RuntimeCell
+            label="Job"
+            tone={diagnostic.lastJobStatus === "DONE" ? "done" : "warn"}
+            value={diagnostic.lastJobStep}
+            detail={diagnostic.lastJobError || diagnostic.videoStatus}
+          />
+          <RuntimeCell
+            label="ffmpeg.log"
+            tone={diagnostic.ffmpegLogTail ? "done" : "warn"}
+            value={diagnostic.ffmpegLogTail ? "captured" : "empty"}
+            detail={diagnostic.ffmpegLogTail || "no ffmpeg log tail"}
+          />
+          <RuntimeCell
+            label="asr.log"
+            tone={diagnostic.asrLogTail ? "done" : "warn"}
+            value={diagnostic.asrLogTail ? "captured" : "empty"}
+            detail={diagnostic.asrLogTail || diagnostic.asrPath}
+          />
+        </div>
+      )}
     </section>
   );
 }
