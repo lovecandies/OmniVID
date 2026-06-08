@@ -24,6 +24,7 @@ apps/web/tsconfig.tsbuildinfo
 
 # Runtime storage and generated media
 apps/api/storage/
+storage/
 bilibili/
 备份/
 artifacts/
