@@ -94,9 +94,9 @@ public class AgentService {
         }
         Optional<String> previousQuestion = shortTermQuestion.isPresent() ? shortTermQuestion : historyQuestion;
         List<TranscriptSegment> segments = transcripts.listByVideoId(videoId);
-        List<Evidence> evidenceList = selectEvidence(segments, request.question());
-        Evidence evidence = evidenceList.isEmpty() ? Evidence.empty() : evidenceList.getFirst();
-        List<AgentCitation> citations = buildCitations(evidenceList, List.of());
+        RetrievalResult retrieval = retrieveEvidence(segments, request.question());
+        Evidence evidence = retrieval.bestEvidence();
+        List<AgentCitation> citations = buildCitations(retrieval.citableEvidence(), List.of());
         String citation = citations.isEmpty() ? "" : citations.getFirst().citation();
         GeneratedAnswer generatedAnswer = generateVideoAnswer(request.question(), evidence, citations, previousQuestion);
         String answer = generatedAnswer.answer();
@@ -106,8 +106,11 @@ public class AgentService {
                 shortTermQuestion,
                 historyQuestion,
                 segments.size(),
-                evidenceList.size(),
+                retrieval.usableCount(),
                 citations.size(),
+                retrieval.rawCandidateCount(),
+                retrieval.rejectedByStrictFilter(),
+                retrieval.topSummary(),
                 evidence.score(),
                 evidence.vectorScore(),
                 evidence.keywordScore(),
@@ -186,9 +189,9 @@ public class AgentService {
         List<VideoAsset> videoAssets = videos.listVideos();
         List<Long> videoIds = videoAssets.stream().map(VideoAsset::id).toList();
         List<TranscriptSegment> segments = transcripts.listByVideoIds(videoIds);
-        List<Evidence> evidenceList = selectEvidence(segments, request.question());
-        Evidence evidence = evidenceList.isEmpty() ? Evidence.empty() : evidenceList.getFirst();
-        List<AgentCitation> citations = buildCitations(evidenceList, videoAssets);
+        RetrievalResult retrieval = retrieveEvidence(segments, request.question());
+        Evidence evidence = retrieval.bestEvidence();
+        List<AgentCitation> citations = buildCitations(retrieval.citableEvidence(), videoAssets);
         String citation = citations.isEmpty() ? "" : citations.getFirst().citation();
         GeneratedAnswer generatedAnswer = generateKnowledgeBaseAnswer(request.question(), evidence, citations, videoAssets.size());
         String answer = generatedAnswer.answer();
@@ -197,8 +200,11 @@ public class AgentService {
         List<AgentTraceStep> trace = buildKnowledgeBaseTrace(
                 videoAssets.size(),
                 segments.size(),
-                evidenceList.size(),
+                retrieval.usableCount(),
                 citations.size(),
+                retrieval.rawCandidateCount(),
+                retrieval.rejectedByStrictFilter(),
+                retrieval.topSummary(),
                 evidence.score(),
                 evidence.vectorScore(),
                 evidence.keywordScore(),
@@ -229,13 +235,14 @@ public class AgentService {
         return response;
     }
 
-    private List<Evidence> selectEvidence(List<TranscriptSegment> segments, String question) {
+    private RetrievalResult retrieveEvidence(List<TranscriptSegment> segments, String question) {
         if (segments.isEmpty()) {
-            return List.of();
+            return RetrievalResult.empty();
         }
 
         List<String> queryTerms = queryTerms(question);
-        return vectorSearch.search(segments, question, TOP_K * 4).stream()
+        List<TranscriptVectorSearch.VectorCandidate> candidates = vectorSearch.search(segments, question, TOP_K * 4);
+        List<Evidence> usable = candidates.stream()
                 .map(candidate -> {
                     int keywordScore = score(candidate.segment().content(), queryTerms);
                     return new Evidence(
@@ -249,8 +256,16 @@ public class AgentService {
                 .sorted(Comparator.comparingInt(Evidence::score).reversed()
                         .thenComparing(Comparator.comparingDouble(Evidence::vectorScore).reversed())
                         .thenComparing(evidence -> evidence.hit().startMs()))
-                .limit(TOP_K)
                 .toList();
+        List<Evidence> topEvidence = usable.stream().limit(TOP_K).toList();
+        List<Evidence> citable = topEvidence.stream().filter(this::citableEvidence).toList();
+        return new RetrievalResult(
+                candidates.size(),
+                usable,
+                topEvidence,
+                citable,
+                Math.max(0, topEvidence.size() - citable.size())
+        );
     }
 
     private int evidenceScore(double vectorScore, int keywordScore) {
@@ -713,6 +728,9 @@ public class AgentService {
             int segmentCount,
             int evidenceCount,
             int citationCount,
+            int rawCandidateCount,
+            int rejectedByStrictFilter,
+            String topSummary,
             int confidenceScore,
             double vectorScore,
             int keywordScore,
@@ -741,8 +759,10 @@ public class AgentService {
                 "provider=" + vectorSearch.providerName()
                         + ", index=" + vectorSearch.indexName()
                         + ", dimensions=" + vectorSearch.dimensions()
-                        + ", candidates=" + evidenceCount
+                        + ", candidates=" + rawCandidateCount
+                        + ", usable=" + evidenceCount
                         + ", topCosine=" + formatScore(vectorScore)
+                        + ", top=" + topSummary
         ));
         trace.add(new AgentTraceStep(
                 "RerankTool",
@@ -752,7 +772,9 @@ public class AgentService {
         trace.add(new AgentTraceStep(
                 "CitationBuilderTool",
                 citationCount > 0 ? "done" : "miss",
-                "citations=" + citationCount + ", strictFilter=keyword>=2|cosine>=0.72"
+                "citations=" + citationCount
+                        + ", rejected=" + rejectedByStrictFilter
+                        + ", strictFilter=keyword>=2|cosine>=0.72"
         ));
         trace.add(new AgentTraceStep(
                 "AnswerPolicyTool",
@@ -784,6 +806,9 @@ public class AgentService {
             int segmentCount,
             int evidenceCount,
             int citationCount,
+            int rawCandidateCount,
+            int rejectedByStrictFilter,
+            String topSummary,
             int confidenceScore,
             double vectorScore,
             int keywordScore,
@@ -813,8 +838,10 @@ public class AgentService {
                 "provider=" + vectorSearch.providerName()
                         + ", index=" + vectorSearch.indexName()
                         + ", dimensions=" + vectorSearch.dimensions()
-                        + ", candidates=" + evidenceCount
+                        + ", candidates=" + rawCandidateCount
+                        + ", usable=" + evidenceCount
                         + ", topCosine=" + formatScore(vectorScore)
+                        + ", top=" + topSummary
         ));
         trace.add(new AgentTraceStep(
                 "RerankTool",
@@ -824,7 +851,9 @@ public class AgentService {
         trace.add(new AgentTraceStep(
                 "CitationBuilderTool",
                 citationCount > 0 ? "done" : "miss",
-                "citations=" + citationCount + ", strictFilter=keyword>=2|cosine>=0.72"
+                "citations=" + citationCount
+                        + ", rejected=" + rejectedByStrictFilter
+                        + ", strictFilter=keyword>=2|cosine>=0.72"
         ));
         trace.add(new AgentTraceStep(
                 "AnswerPolicyTool",
@@ -1099,6 +1128,38 @@ public class AgentService {
     private record Evidence(TranscriptSegment hit, int score, double vectorScore, int keywordScore) {
         static Evidence empty() {
             return new Evidence(null, 0, 0, 0);
+        }
+    }
+
+    private record RetrievalResult(
+            int rawCandidateCount,
+            List<Evidence> usableEvidence,
+            List<Evidence> topEvidence,
+            List<Evidence> citableEvidence,
+            int rejectedByStrictFilter
+    ) {
+        static RetrievalResult empty() {
+            return new RetrievalResult(0, List.of(), List.of(), List.of(), 0);
+        }
+
+        Evidence bestEvidence() {
+            return topEvidence.isEmpty() ? Evidence.empty() : topEvidence.getFirst();
+        }
+
+        int usableCount() {
+            return usableEvidence.size();
+        }
+
+        String topSummary() {
+            Evidence evidence = bestEvidence();
+            if (evidence.hit() == null) {
+                return "none";
+            }
+            return "segment#" + evidence.hit().id()
+                    + "@" + evidence.hit().videoId()
+                    + "/" + evidence.hit().startMs()
+                    + ", keyword=" + evidence.keywordScore()
+                    + ", cosine=" + String.format(Locale.ROOT, "%.3f", evidence.vectorScore());
         }
     }
 

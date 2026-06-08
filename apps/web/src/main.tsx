@@ -2521,9 +2521,12 @@ function RetrievalInspectorPanel({
   const dimensions = traceValue(vectorDetail, "dimensions") || String(status?.llm.embeddingDimensions ?? 0);
   const candidates = traceValue(vectorDetail, "candidates") || "-";
   const topCosine = traceValue(vectorDetail, "topCosine");
+  const usable = traceValue(vectorDetail, "usable") || "-";
+  const topHit = traceValue(vectorDetail, "top") || "-";
   const topK = traceValue(rerankDetail, "topK") || "-";
   const keywordScore = traceValue(rerankDetail, "keywordScore") || "-";
   const citations = traceValue(citationDetail, "citations") || String(latestMessage?.citations?.length ?? 0);
+  const rejected = traceValue(citationDetail, "rejected") || "0";
   const llmModel = traceValue(llmDetail, "model") || status?.llm.model || "-";
   const durationMs = traceValue(llmDetail, "durationMs");
   const tokens = traceTokenValue(llmDetail) || "-";
@@ -2557,7 +2560,7 @@ function RetrievalInspectorPanel({
             label="Recall"
             tone={Number(candidates) > 0 ? "done" : "warn"}
             value={`${candidates} candidates`}
-            detail={topCosine ? `topCosine=${topCosine}` : "no cosine hit"}
+            detail={topCosine ? `usable=${usable} / topCosine=${topCosine}` : `usable=${usable}`}
           />
           <RuntimeCell
             label="Rerank"
@@ -2569,7 +2572,13 @@ function RetrievalInspectorPanel({
             label="Citation"
             tone={citationTone}
             value={`${citations} citations`}
-            detail={citationDetail || policyDetail || policy}
+            detail={`rejected=${rejected} / ${citationDetail || policyDetail || policy}`}
+          />
+          <RuntimeCell
+            label="Top Hit"
+            tone={topHit === "-" || topHit === "none" ? "warn" : "done"}
+            value={topHit === "-" ? "waiting" : topHit}
+            detail="segmentId@videoId/startMs"
           />
           <RuntimeCell
             label="LLM"
