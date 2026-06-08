@@ -58,6 +58,7 @@ input:disabled {
 }
 
 .app-shell {
+  position: relative;
   width: min(1480px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 28px 0 36px;
@@ -119,6 +120,17 @@ h2 {
     0 12px 34px rgba(0, 0, 0, 0.18);
 }
 
+.diagnostics-trigger {
+  border: 0;
+  text-align: left;
+}
+
+.diagnostics-trigger.active {
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    0 16px 42px rgba(45, 212, 191, 0.16);
+}
+
 .metric-icon {
   display: grid;
   place-items: center;
@@ -162,64 +174,80 @@ h2 {
 }
 
 .diagnostics-panel {
+  position: absolute;
+  top: 100px;
+  right: 0;
+  z-index: 30;
   display: grid;
-  gap: 14px;
-  margin-top: 8px;
-}
-
-.left-rail .diagnostics-panel {
-  gap: 12px;
-  margin-top: 0;
+  gap: 10px;
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(620px, calc(100vh - 118px));
+  padding: 14px;
+  overflow: auto;
+  border-radius: 22px;
+  background: rgba(11, 17, 24, 0.96);
+  box-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.46),
+    inset 0 0 0 1px var(--line-strong);
+  backdrop-filter: blur(20px);
 }
 
 .diagnostics-head {
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostics-title-row {
   display: flex;
-  align-items: flex-end;
+  align-items: start;
   justify-content: space-between;
-  gap: 18px;
-  padding: 0 2px;
+  gap: 12px;
 }
 
 .diagnostics-head h2 {
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--text-strong);
   font-family: Georgia, "Times New Roman", "Songti SC", serif;
-  font-size: 24px;
-}
-
-.diagnostics-head p {
-  max-width: 680px;
-  margin: 7px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.left-rail .diagnostics-head {
-  display: grid;
-  gap: 10px;
-  padding: 0;
-}
-
-.left-rail .diagnostics-head h2 {
   font-size: 19px;
 }
 
-.left-rail .diagnostics-head p {
-  margin-top: 5px;
+.diagnostics-head p {
+  margin: 0;
+  color: var(--muted);
   font-size: 12px;
+  line-height: 1.5;
+}
+
+.diagnostics-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.diagnostics-metrics .metric {
+  min-width: 0;
+  padding: 8px 9px;
+  border-radius: 16px;
+}
+
+.diagnostics-metrics .metric-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+}
+
+.diagnostics-metrics .metric strong {
+  font-size: 12px;
+}
+
+.diagnostics-metrics .metric small {
+  font-size: 10px;
 }
 
 .diagnostics-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(112px, 1fr));
-  gap: 8px;
-  min-width: min(560px, 100%);
-}
-
-.left-rail .diagnostics-tabs {
   grid-template-columns: 1fr 1fr;
-  min-width: 0;
+  gap: 8px;
 }
 
 .diagnostics-tabs button {
@@ -227,17 +255,12 @@ h2 {
   gap: 3px;
   min-width: 0;
   border: 0;
-  border-radius: 18px;
-  padding: 10px 12px;
+  border-radius: 15px;
+  padding: 8px 9px;
   color: var(--muted);
   text-align: left;
   background: rgba(19, 29, 39, 0.78);
   box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.left-rail .diagnostics-tabs button {
-  border-radius: 15px;
-  padding: 8px 9px;
 }
 
 .diagnostics-tabs button.active {
@@ -263,21 +286,38 @@ h2 {
   font-size: 11px;
 }
 
+.diagnostics-close {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--danger);
+  background: rgba(240, 133, 114, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(240, 133, 114, 0.2);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .diagnostics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: 1fr;
+  gap: 12px;
   align-items: start;
 }
 
-.diagnostics-grid.ai {
-  grid-template-columns: minmax(300px, 380px) minmax(420px, 1fr);
+.diagnostics-panel .panel {
+  padding: 14px;
 }
 
-.left-rail .diagnostics-grid,
-.left-rail .diagnostics-grid.ai {
+.diagnostics-panel .panel-title {
+  margin-bottom: 10px;
+}
+
+.diagnostics-panel .runtime-cell {
+  padding: 9px 10px;
+}
+
+.diagnostics-grid.ai {
   grid-template-columns: 1fr;
-  gap: 12px;
 }
 
 .panel,
@@ -1983,17 +2023,9 @@ h2 {
     grid-template-columns: 1fr 1fr;
   }
 
-  .diagnostics-head {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .diagnostics-tabs {
-    min-width: 0;
-  }
-
-  .diagnostics-grid.ai {
-    grid-template-columns: 1fr;
+  .diagnostics-panel {
+    top: 124px;
+    width: min(480px, calc(100vw - 32px));
   }
 }
 
@@ -2010,11 +2042,24 @@ h2 {
 
   .header-metrics,
   .workspace-grid,
-  .right-rail,
-  .diagnostics-tabs,
-  .diagnostics-grid {
+  .right-rail {
     grid-template-columns: 1fr;
     width: 100%;
+  }
+
+  .diagnostics-panel {
+    position: static;
+    width: 100%;
+    max-height: none;
+    margin-bottom: 16px;
+  }
+
+  .diagnostics-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostics-metrics {
+    grid-template-columns: 1fr;
   }
 
   .metric {

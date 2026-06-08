@@ -674,6 +674,7 @@ function App() {
   const [isTestingLlm, setIsTestingLlm] = useState(false);
   const [activatingLlmId, setActivatingLlmId] = useState<number | null>(null);
   const [diagnosticsTab, setDiagnosticsTab] = useState<DiagnosticsTab>("runtime");
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceState>({
     video: null,
@@ -1300,7 +1301,43 @@ function App() {
 
   return (
     <main className="app-shell">
-      <Header />
+      <Header
+        diagnosticsOpen={diagnosticsOpen}
+        onDiagnosticsToggle={() => setDiagnosticsOpen((current) => !current)}
+      />
+      {diagnosticsOpen && (
+        <DiagnosticsPanel
+          activeTab={diagnosticsTab}
+          agentContext={agentContext}
+          asrDiagnostic={asrDiagnostic}
+          failedJobs={failedJobs}
+          isLoading={isLoading}
+          isRebuildingVectorIndex={isRebuildingVectorIndex}
+          job={workspace.job}
+          latestAgentMessage={latestAgentMessage}
+          mysqlExplain={mysqlExplain}
+          onClose={() => setDiagnosticsOpen(false)}
+          onRebuildVectorIndex={handleRebuildVectorIndex}
+          onRefreshAsr={() => refreshAsrDiagnostic()}
+          onRefreshFailedJobs={refreshFailedJobs}
+          onRefreshMysql={refreshMysqlExplain}
+          onRefreshRedis={refreshRedisInspect}
+          onRefreshThreadPool={refreshThreadPoolInspect}
+          onRefreshVectorStore={refreshVectorIndexInspect}
+          onRetryFailedJob={handleRetryFailedJob}
+          onSelectFailedVideo={loadVideo}
+          onTabChange={setDiagnosticsTab}
+          rebuildStatus={vectorIndexStatus}
+          redisInspect={redisInspect}
+          runtimeStatus={runtimeStatus}
+          sseInspect={sseInspect}
+          summaries={workspace.summaries}
+          threadPoolInspect={threadPoolInspect}
+          transcripts={workspace.transcripts}
+          vectorIndexInspect={vectorIndexInspect}
+          video={workspace.video}
+        />
+      )}
       <section className="workspace-grid">
         <aside className="left-rail" aria-label="上传与任务">
           <UploadPanel
@@ -1317,36 +1354,6 @@ function App() {
             urlValue={videoUrl}
             onOptionsChange={setUrlImportOptions}
             onUrlChange={setVideoUrl}
-            video={workspace.video}
-          />
-          <DiagnosticsPanel
-            activeTab={diagnosticsTab}
-            agentContext={agentContext}
-            asrDiagnostic={asrDiagnostic}
-            failedJobs={failedJobs}
-            isLoading={isLoading}
-            isRebuildingVectorIndex={isRebuildingVectorIndex}
-            job={workspace.job}
-            latestAgentMessage={latestAgentMessage}
-            mysqlExplain={mysqlExplain}
-            onRebuildVectorIndex={handleRebuildVectorIndex}
-            onRefreshAsr={() => refreshAsrDiagnostic()}
-            onRefreshFailedJobs={refreshFailedJobs}
-            onRefreshMysql={refreshMysqlExplain}
-            onRefreshRedis={refreshRedisInspect}
-            onRefreshThreadPool={refreshThreadPoolInspect}
-            onRefreshVectorStore={refreshVectorIndexInspect}
-            onRetryFailedJob={handleRetryFailedJob}
-            onSelectFailedVideo={loadVideo}
-            onTabChange={setDiagnosticsTab}
-            rebuildStatus={vectorIndexStatus}
-            redisInspect={redisInspect}
-            runtimeStatus={runtimeStatus}
-            sseInspect={sseInspect}
-            summaries={workspace.summaries}
-            threadPoolInspect={threadPoolInspect}
-            transcripts={workspace.transcripts}
-            vectorIndexInspect={vectorIndexInspect}
             video={workspace.video}
           />
           <LlmConfigPanel
@@ -1423,6 +1430,7 @@ function DiagnosticsPanel({
   latestAgentMessage,
   mysqlExplain,
   onRebuildVectorIndex,
+  onClose,
   onRefreshAsr,
   onRefreshFailedJobs,
   onRefreshMysql,
@@ -1452,6 +1460,7 @@ function DiagnosticsPanel({
   latestAgentMessage: ChatMessage | undefined;
   mysqlExplain: MysqlExplainPlan[];
   onRebuildVectorIndex: () => void;
+  onClose: () => void;
   onRefreshAsr: () => void;
   onRefreshFailedJobs: () => void;
   onRefreshMysql: () => void;
@@ -1474,13 +1483,25 @@ function DiagnosticsPanel({
   return (
     <section className="diagnostics-panel" aria-label="面试钩子诊断台">
       <div className="diagnostics-head">
-        <div>
-          <div className="eyebrow">
-            <ShieldCheck size={16} />
-            Interview Hooks
+        <div className="diagnostics-title-row">
+          <div>
+            <div className="eyebrow">
+              <ShieldCheck size={16} />
+              Interview Hooks
+            </div>
+            <h2>诊断台</h2>
           </div>
-          <h2>诊断台</h2>
+          <button className="diagnostics-close" onClick={onClose} type="button">
+            关闭
+          </button>
+        </div>
+        <div>
           <p>把 MySQL、Redis、RAG、ASR、线程池和补偿链路收纳到这里，主流程保持清爽。</p>
+        </div>
+        <div className="diagnostics-metrics" aria-label="诊断状态指标">
+          <Metric icon={<Database size={16} />} label="MySQL 状态机" value="6 tables" />
+          <Metric icon={<Zap size={16} />} label="Redis 钩子" value="7 keys" />
+          <Metric icon={<Bot size={16} />} label="Agent 工具" value="3 tools" />
         </div>
         <div className="diagnostics-tabs" role="tablist" aria-label="诊断分类">
           {diagnosticTabs.map((tab) => (
@@ -1733,7 +1754,13 @@ const diagnosticTabs: { id: DiagnosticsTab; label: string; meta: string }[] = [
   { id: "recovery", label: "Recovery", meta: "ASR / 补偿" },
 ];
 
-function Header() {
+function Header({
+  diagnosticsOpen,
+  onDiagnosticsToggle,
+}: {
+  diagnosticsOpen: boolean;
+  onDiagnosticsToggle: () => void;
+}) {
   return (
     <header className="app-header">
       <div>
@@ -1744,11 +1771,37 @@ function Header() {
         <h1>OmniVid 工作台</h1>
       </div>
       <div className="header-metrics" aria-label="系统指标">
-        <Metric icon={<Database size={17} />} label="MySQL 状态机" value="6 tables" />
-        <Metric icon={<Zap size={17} />} label="Redis 钩子" value="7 keys" />
-        <Metric icon={<Bot size={17} />} label="Agent 工具" value="3 tools" />
+        <HeaderDiagnosticsButton
+          active={diagnosticsOpen}
+          onClick={onDiagnosticsToggle}
+        />
       </div>
     </header>
+  );
+}
+
+function HeaderDiagnosticsButton({
+  active,
+  onClick,
+}: {
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-expanded={active}
+      className={`metric diagnostics-trigger ${active ? "active" : ""}`}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="metric-icon">
+        <ShieldCheck size={17} />
+      </span>
+      <span>
+        <strong>诊断台</strong>
+        <small>{active ? "点击收起" : "点击查看"}</small>
+      </span>
+    </button>
   );
 }
 
