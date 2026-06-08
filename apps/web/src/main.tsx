@@ -424,6 +424,28 @@ const fallbackTranscript: ApiTranscriptSegment = {
   content: "点击上传后，这里会显示后端返回的时间轴字幕。",
 };
 
+async function readApiError(response: Response) {
+  const text = await response.text();
+  if (!text) {
+    return `Request failed: ${response.status}`;
+  }
+  try {
+    const parsed = JSON.parse(text) as {
+      message?: string;
+      suggestion?: string;
+      detail?: string;
+    };
+    const parts = [
+      parsed.message,
+      parsed.suggestion ? `建议：${parsed.suggestion}` : "",
+      parsed.detail ? `日志：${parsed.detail}` : "",
+    ].filter(Boolean);
+    return parts.join("\n");
+  } catch {
+    return text;
+  }
+}
+
 async function apiJsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -434,7 +456,7 @@ async function apiJsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const message = await readApiError(response);
     throw new Error(message || `Request failed: ${response.status}`);
   }
 
@@ -448,7 +470,7 @@ async function apiFormRequest<T>(path: string, body: FormData): Promise<T> {
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const message = await readApiError(response);
     throw new Error(message || `Request failed: ${response.status}`);
   }
 

@@ -96,15 +96,32 @@ public class VideoUrlImportService {
                     .start();
             if (!process.waitFor(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
                 process.destroyForcibly();
-                throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, platform + " URL download timed out");
+                throw new ApiException(
+                        HttpStatus.GATEWAY_TIMEOUT,
+                        platform + " URL download timed out",
+                        "请先确认浏览器能打开该链接；如果是长视频或平台响应慢，可以调大 OMNIVID_URL_IMPORT_TIMEOUT 后重试。",
+                        null
+                );
             }
             if (process.exitValue() != 0) {
-                throw new ApiException(HttpStatus.BAD_GATEWAY, platform + " URL download failed: " + readLogTail(logFile));
+                String logTail = readLogTail(logFile);
+                DownloadDiagnostic diagnostic = diagnoseDownloadFailure(platform, logTail);
+                throw new ApiException(HttpStatus.BAD_GATEWAY, diagnostic.message(), diagnostic.suggestion(), diagnostic.detail());
             }
             return findDownloadedVideo(workDir)
-                    .orElseThrow(() -> new ApiException(HttpStatus.BAD_GATEWAY, platform + " URL did not produce a video file"));
+                    .orElseThrow(() -> new ApiException(
+                            HttpStatus.BAD_GATEWAY,
+                            platform + " URL did not produce a video file",
+                            "yt-dlp 已执行完成但没有产出可识别的视频文件，请尝试更新 yt-dlp，或换用原始视频页链接而不是分享/合集/笔记列表链接。",
+                            null
+                    ));
         } catch (IOException exception) {
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "yt-dlp is not available; set OMNIVID_YTDLP_PATH or install yt-dlp");
+            throw new ApiException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "yt-dlp is not available",
+                    "请确认 OMNIVID_YTDLP_PATH 指向可执行的 yt-dlp.exe，或把 yt-dlp 安装到系统 PATH；当前配置：" + ytdlpPath,
+                    exception.getMessage()
+            );
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "URL import was interrupted");
@@ -132,6 +149,57 @@ public class VideoUrlImportService {
         }
         command.add("--cookies-from-browser");
         command.add(browser);
+    }
+
+    private DownloadDiagnostic diagnoseDownloadFailure(String platform, String logTail) {
+        String normalized = logTail.toLowerCase(Locale.ROOT);
+        if (normalized.contains("http error 412") || normalized.contains("precondition failed")) {
+            return new DownloadDiagnostic(
+                    platform + " URL import was blocked by platform anti-crawler",
+                    "这是 B站常见的 412 场景。请在页面填写 cookies.txt 路径，或选择 browser cookies=edge/chrome/firefox 后重试，并确认浏览器已登录该平台。",
+                    logTail
+            );
+        }
+        if (normalized.contains("http error 403") || normalized.contains("forbidden")) {
+            return new DownloadDiagnostic(
+                    platform + " URL import was forbidden by the platform",
+                    "平台拒绝了无登录态访问。请提供 cookies.txt 或 browser cookies；如果仍失败，先用浏览器打开视频确认账号能正常播放。",
+                    logTail
+            );
+        }
+        if (normalized.contains("login") || normalized.contains("sign in") || normalized.contains("cookie")) {
+            return new DownloadDiagnostic(
+                    platform + " URL import requires login cookies",
+                    "请导出 cookies.txt 并填写到 URL 导入区域，或选择 browser cookies=edge/chrome/firefox 复用本机浏览器登录态。",
+                    logTail
+            );
+        }
+        if (normalized.contains("unsupported url") || normalized.contains("no suitable extractor")) {
+            return new DownloadDiagnostic(
+                    platform + " URL is not supported by current yt-dlp",
+                    "请更新 tools/url/yt-dlp.exe，或改用平台原始视频页链接；短链、合集页、搜索页和笔记列表更容易解析失败。",
+                    logTail
+            );
+        }
+        if (normalized.contains("ffmpeg")) {
+            return new DownloadDiagnostic(
+                    platform + " URL downloaded but media merge failed",
+                    "请确认 OMNIVID_FFMPEG_PATH 或 omnivid.ffmpeg.path 指向可用的 ffmpeg.exe，且当前视频的音视频流可以合并为 mp4。",
+                    logTail
+            );
+        }
+        if (normalized.contains("unable to download webpage") || normalized.contains("timed out")) {
+            return new DownloadDiagnostic(
+                    platform + " URL webpage download failed",
+                    "请确认链接可公开访问、网络可连接该平台；B站/抖音/小红书失败时优先尝试 Cookie 登录态。",
+                    logTail
+            );
+        }
+        return new DownloadDiagnostic(
+                platform + " URL download failed",
+                "请先确认链接能在浏览器播放；如果平台需要登录，请配置 cookies.txt 或 browser cookies；如果是 yt-dlp 版本问题，请更新 tools/url/yt-dlp.exe。",
+                logTail
+        );
     }
 
     private Optional<Path> findDownloadedVideo(Path workDir) {
@@ -225,6 +293,9 @@ public class VideoUrlImportService {
         } catch (IOException exception) {
             return "";
         }
+    }
+
+    private record DownloadDiagnostic(String message, String suggestion, String detail) {
     }
 
     private void deleteWorkDir(Path workDir) {
