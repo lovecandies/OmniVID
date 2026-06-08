@@ -10,6 +10,7 @@
 
 1. 左侧操作区
    - 本地视频上传、平台 URL 导入、任务重试。
+   - 诊断台 Tabs：Runtime、AI/RAG、Data、Recovery。
    - DeepSeek/LLM Provider 配置与可用列表。
    - 视频知识库列表。
    - 当前 DAG 流水线。
@@ -22,15 +23,16 @@
    - 结构化总结。
    - Agent 问答与时间戳引用。
 
-4. 底部诊断区
+4. 左侧诊断台
    - Runtime：运行状态、线程池、SSE 进度。
    - AI/RAG：向量库状态、检索链路。
    - Data：MySQL EXPLAIN、Redis Key、Redis 钩子、数据库状态。
    - Recovery：ASR 诊断、失败任务补偿、面试钩子卡片。
+   - 诊断入口不再依赖页面底部位置，避免长视频或长字幕把它挤到很深的地方。
 
 ## 黑盒验证目标
 
 - 打开页面后，第一屏能看到上传区、视频区、字幕区、总结/Agent 区，不再被诊断面板挤满。
-- MySQL、Redis、RAG、ASR、SSE、线程池等面试钩子仍能在底部诊断 Tabs 中查看。
+- MySQL、Redis、RAG、ASR、SSE、线程池等面试钩子能在左侧诊断 Tabs 中查看。
 - 上传、URL 导入、视频切换、字幕点击跳转、Agent 追问的入口仍保持可见。
 - 前端 `npm run build` 通过。

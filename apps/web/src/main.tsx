@@ -1319,6 +1319,36 @@ function App() {
             onUrlChange={setVideoUrl}
             video={workspace.video}
           />
+          <DiagnosticsPanel
+            activeTab={diagnosticsTab}
+            agentContext={agentContext}
+            asrDiagnostic={asrDiagnostic}
+            failedJobs={failedJobs}
+            isLoading={isLoading}
+            isRebuildingVectorIndex={isRebuildingVectorIndex}
+            job={workspace.job}
+            latestAgentMessage={latestAgentMessage}
+            mysqlExplain={mysqlExplain}
+            onRebuildVectorIndex={handleRebuildVectorIndex}
+            onRefreshAsr={() => refreshAsrDiagnostic()}
+            onRefreshFailedJobs={refreshFailedJobs}
+            onRefreshMysql={refreshMysqlExplain}
+            onRefreshRedis={refreshRedisInspect}
+            onRefreshThreadPool={refreshThreadPoolInspect}
+            onRefreshVectorStore={refreshVectorIndexInspect}
+            onRetryFailedJob={handleRetryFailedJob}
+            onSelectFailedVideo={loadVideo}
+            onTabChange={setDiagnosticsTab}
+            rebuildStatus={vectorIndexStatus}
+            redisInspect={redisInspect}
+            runtimeStatus={runtimeStatus}
+            sseInspect={sseInspect}
+            summaries={workspace.summaries}
+            threadPoolInspect={threadPoolInspect}
+            transcripts={workspace.transcripts}
+            vectorIndexInspect={vectorIndexInspect}
+            video={workspace.video}
+          />
           <LlmConfigPanel
             config={llmConfig}
             form={llmForm}
@@ -1378,36 +1408,6 @@ function App() {
           />
         </aside>
       </section>
-      <DiagnosticsPanel
-        activeTab={diagnosticsTab}
-        agentContext={agentContext}
-        asrDiagnostic={asrDiagnostic}
-        failedJobs={failedJobs}
-        isLoading={isLoading}
-        isRebuildingVectorIndex={isRebuildingVectorIndex}
-        job={workspace.job}
-        latestAgentMessage={latestAgentMessage}
-        mysqlExplain={mysqlExplain}
-        onRebuildVectorIndex={handleRebuildVectorIndex}
-        onRefreshAsr={() => refreshAsrDiagnostic()}
-        onRefreshFailedJobs={refreshFailedJobs}
-        onRefreshMysql={refreshMysqlExplain}
-        onRefreshRedis={refreshRedisInspect}
-        onRefreshThreadPool={refreshThreadPoolInspect}
-        onRefreshVectorStore={refreshVectorIndexInspect}
-        onRetryFailedJob={handleRetryFailedJob}
-        onSelectFailedVideo={loadVideo}
-        onTabChange={setDiagnosticsTab}
-        rebuildStatus={vectorIndexStatus}
-        redisInspect={redisInspect}
-        runtimeStatus={runtimeStatus}
-        sseInspect={sseInspect}
-        summaries={workspace.summaries}
-        threadPoolInspect={threadPoolInspect}
-        transcripts={workspace.transcripts}
-        vectorIndexInspect={vectorIndexInspect}
-        video={workspace.video}
-      />
     </main>
   );
 }

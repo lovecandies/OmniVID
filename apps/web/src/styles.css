@@ -167,6 +167,11 @@ h2 {
   margin-top: 8px;
 }
 
+.left-rail .diagnostics-panel {
+  gap: 12px;
+  margin-top: 0;
+}
+
 .diagnostics-head {
   display: flex;
   align-items: flex-end;
@@ -190,11 +195,31 @@ h2 {
   line-height: 1.5;
 }
 
+.left-rail .diagnostics-head {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+}
+
+.left-rail .diagnostics-head h2 {
+  font-size: 19px;
+}
+
+.left-rail .diagnostics-head p {
+  margin-top: 5px;
+  font-size: 12px;
+}
+
 .diagnostics-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(112px, 1fr));
   gap: 8px;
   min-width: min(560px, 100%);
+}
+
+.left-rail .diagnostics-tabs {
+  grid-template-columns: 1fr 1fr;
+  min-width: 0;
 }
 
 .diagnostics-tabs button {
@@ -208,6 +233,11 @@ h2 {
   text-align: left;
   background: rgba(19, 29, 39, 0.78);
   box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.left-rail .diagnostics-tabs button {
+  border-radius: 15px;
+  padding: 8px 9px;
 }
 
 .diagnostics-tabs button.active {
@@ -242,6 +272,12 @@ h2 {
 
 .diagnostics-grid.ai {
   grid-template-columns: minmax(300px, 380px) minmax(420px, 1fr);
+}
+
+.left-rail .diagnostics-grid,
+.left-rail .diagnostics-grid.ai {
+  grid-template-columns: 1fr;
+  gap: 12px;
 }
 
 .panel,
