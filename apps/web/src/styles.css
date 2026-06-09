@@ -2111,6 +2111,76 @@ h2 {
   box-shadow: inset 0 0 0 1px rgba(240, 133, 114, 0.24);
 }
 
+.agent-trace-disclosure {
+  margin-top: 12px;
+}
+
+.agent-trace-disclosure summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 11px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(147, 163, 173, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(147, 163, 173, 0.18);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.agent-trace-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-trace-disclosure summary::marker {
+  content: "";
+}
+
+.agent-trace-disclosure summary:hover {
+  color: var(--text);
+  background: rgba(147, 163, 173, 0.15);
+  box-shadow: inset 0 0 0 1px rgba(147, 163, 173, 0.28);
+  transform: translateY(-1px);
+}
+
+.agent-trace-disclosure[open] summary {
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.agent-trace-disclosure summary span {
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.agent-trace-disclosure summary small {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  opacity: 0.72;
+}
+
+.agent-trace-disclosure:not([open]) > :not(summary) {
+  display: none;
+}
+
+.agent-trace-disclosure .answer-mode,
+.agent-trace-disclosure .cache-hit,
+.agent-trace-disclosure .context-used,
+.agent-trace-disclosure .confidence-chip {
+  margin-left: 0;
+}
+
 .runtime-badges {
   display: grid;
   gap: 6px;

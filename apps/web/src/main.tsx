@@ -3417,6 +3417,18 @@ function AgentPanel({
                 ))}
               </div>
             )}
+            {message.role === "agent" &&
+              (message.trace?.length ||
+                answerModeLabel(message.answerMode) ||
+                message.confidenceLevel ||
+                message.cacheHit ||
+                message.contextUsed) && (
+                <details className="agent-trace-disclosure">
+                  <summary>
+                    <GitBranch size={13} />
+                    <span>展开执行链路</span>
+                    <small>{message.trace?.length ? `${message.trace.length} steps` : "summary"}</small>
+                  </summary>
             {answerModeLabel(message.answerMode) && (
               <span className={`answer-mode ${answerModeClass(message.answerMode)}`}>
                 {answerModeLabel(message.answerMode)}
@@ -3453,6 +3465,8 @@ function AgentPanel({
                 ))}
               </div>
             )}
+                </details>
+              )}
           </div>
         ))}
       </div>
