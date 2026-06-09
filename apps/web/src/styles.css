@@ -163,6 +163,7 @@ h2 {
     0 16px 42px rgba(45, 212, 191, 0.16);
 }
 
+.library-trigger .metric-icon,
 .llm-trigger.ready .metric-icon {
   color: var(--accent);
   background: var(--accent-soft);
@@ -766,6 +767,19 @@ h2 {
     rgba(11, 17, 24, 0.96);
 }
 
+.library-popover {
+  position: absolute;
+  top: 100px;
+  right: 314px;
+  z-index: 30;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(540px, calc(100vh - 118px));
+  overflow: auto;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 38%),
+    rgba(11, 17, 24, 0.96);
+}
+
 .llm-panel .panel-action {
   margin-left: 0;
 }
@@ -1327,6 +1341,10 @@ h2 {
   padding: 0;
   margin: 0;
   list-style: none;
+}
+
+.pipeline-panel {
+  min-height: 494px;
 }
 
 .pipeline-item {
@@ -2312,6 +2330,7 @@ h2 {
   }
 
   .diagnostics-panel,
+  .library-popover,
   .llm-panel {
     position: static;
     width: 100%;

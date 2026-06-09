@@ -676,6 +676,7 @@ function App() {
   const [diagnosticsTab, setDiagnosticsTab] = useState<DiagnosticsTab>("runtime");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [llmOpen, setLlmOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceState>({
     video: null,
@@ -1304,17 +1305,38 @@ function App() {
     <main className="app-shell">
       <Header
         diagnosticsOpen={diagnosticsOpen}
+        libraryOpen={libraryOpen}
         llmConfig={llmConfig}
         llmOpen={llmOpen}
         onDiagnosticsToggle={() => {
           setDiagnosticsOpen((current) => !current);
           setLlmOpen(false);
+          setLibraryOpen(false);
+        }}
+        onLibraryToggle={() => {
+          setLibraryOpen((current) => !current);
+          setLlmOpen(false);
+          setDiagnosticsOpen(false);
         }}
         onLlmToggle={() => {
           setLlmOpen((current) => !current);
           setDiagnosticsOpen(false);
+          setLibraryOpen(false);
         }}
+        videosCount={videos.length}
       />
+      {libraryOpen && (
+        <VideoLibraryPanel
+          activeVideoId={workspace.video?.id ?? null}
+          onClose={() => setLibraryOpen(false)}
+          onSelect={(videoId) => {
+            setLibraryOpen(false);
+            loadVideo(videoId);
+          }}
+          videos={videos}
+          variant="popover"
+        />
+      )}
       {llmOpen && (
         <LlmConfigPanel
           activatingProviderId={activatingLlmId}
@@ -1381,11 +1403,6 @@ function App() {
             onOptionsChange={setUrlImportOptions}
             onUrlChange={setVideoUrl}
             video={workspace.video}
-          />
-          <VideoLibraryPanel
-            activeVideoId={workspace.video?.id ?? null}
-            onSelect={loadVideo}
-            videos={videos}
           />
           <PipelinePanel steps={steps} />
         </aside>
@@ -1769,16 +1786,22 @@ const diagnosticTabs: { id: DiagnosticsTab; label: string; meta: string }[] = [
 
 function Header({
   diagnosticsOpen,
+  libraryOpen,
   llmConfig,
   llmOpen,
   onDiagnosticsToggle,
+  onLibraryToggle,
   onLlmToggle,
+  videosCount,
 }: {
   diagnosticsOpen: boolean;
+  libraryOpen: boolean;
   llmConfig: LlmConfig | null;
   llmOpen: boolean;
   onDiagnosticsToggle: () => void;
+  onLibraryToggle: () => void;
   onLlmToggle: () => void;
+  videosCount: number;
 }) {
   const llmReady = Boolean(llmConfig?.enabled && llmConfig.configured);
 
@@ -1792,6 +1815,11 @@ function Header({
         <h1>OmniVid 工作台</h1>
       </div>
       <div className="header-metrics" aria-label="系统指标">
+        <HeaderLibraryButton
+          active={libraryOpen}
+          count={videosCount}
+          onClick={onLibraryToggle}
+        />
         <HeaderLlmButton
           active={llmOpen}
           ready={llmReady}
@@ -1804,6 +1832,33 @@ function Header({
         />
       </div>
     </header>
+  );
+}
+
+function HeaderLibraryButton({
+  active,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-expanded={active}
+      className={`metric top-popover-trigger library-trigger ${active ? "active" : ""}`}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="metric-icon">
+        <Database size={17} />
+      </span>
+      <span>
+        <strong>视频库</strong>
+        <small>{count ? `${count} 个本地视频` : "等待上传"}</small>
+      </span>
+    </button>
   );
 }
 
@@ -2877,19 +2932,28 @@ function RetrievalInspectorPanel({
 
 function VideoLibraryPanel({
   activeVideoId,
+  onClose,
   onSelect,
+  variant = "inline",
   videos,
 }: {
   activeVideoId: number | null;
+  onClose?: () => void;
   onSelect: (videoId: number) => void;
+  variant?: "inline" | "popover";
   videos: VideoAsset[];
 }) {
   return (
-    <section className="panel library-panel">
+    <section className={`panel library-panel ${variant === "popover" ? "library-popover" : ""}`}>
       <div className="panel-title">
         <Database size={19} />
         <h2>视频知识库</h2>
         <span className="panel-count">{videos.length} 个</span>
+        {onClose && (
+          <button className="panel-action" onClick={onClose} type="button">
+            收起
+          </button>
+        )}
       </div>
       <div className="library-list">
         {videos.length === 0 ? (
@@ -2914,7 +2978,7 @@ function VideoLibraryPanel({
 
 function PipelinePanel({ steps }: { steps: PipelineStep[] }) {
   return (
-    <section className="panel">
+    <section className="panel pipeline-panel">
       <div className="panel-title">
         <GitBranch size={19} />
         <h2>轻量 DAG</h2>
