@@ -347,6 +347,7 @@ type ChatMessage = {
 };
 
 type AgentMode = "video" | "knowledgeBase";
+type RightWorkspaceTab = "summary" | "agent";
 type DiagnosticsTab = "runtime" | "ai" | "data" | "recovery";
 
 type WorkspaceState = {
@@ -628,6 +629,7 @@ async function rebuildVectorIndex() {
 function App() {
   const [activeSegment, setActiveSegment] = useState(0);
   const [agentMode, setAgentMode] = useState<AgentMode>("video");
+  const [rightWorkspaceTab, setRightWorkspaceTab] = useState<RightWorkspaceTab>("agent");
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [isLoading, setIsLoading] = useState(false);
@@ -1429,19 +1431,26 @@ function App() {
         </section>
 
         <aside className="right-rail" aria-label="总结与问答">
-          <SummaryPanel summaries={workspace.summaries} />
-          <AgentPanel
-            disabled={agentMode === "video" && !workspace.video}
-            mode={agentMode}
-            messages={messages}
-            onClear={handleClearAgentMessages}
-            onCitationSelect={handleSelectCitation}
-            query={query}
-            context={agentContext}
-            video={workspace.video}
-            onAsk={handleAskAgent}
-            onModeChange={setAgentMode}
-            onQueryChange={setQuery}
+          <RightWorkspacePanel
+            activeTab={rightWorkspaceTab}
+            agent={
+              <AgentPanel
+                disabled={agentMode === "video" && !workspace.video}
+                mode={agentMode}
+                messages={messages}
+                onClear={handleClearAgentMessages}
+                onCitationSelect={handleSelectCitation}
+                query={query}
+                context={agentContext}
+                video={workspace.video}
+                onAsk={handleAskAgent}
+                onModeChange={setAgentMode}
+                onQueryChange={setQuery}
+              />
+            }
+            onTabChange={setRightWorkspaceTab}
+            summariesCount={workspace.summaries.length}
+            summary={<SummaryPanel summaries={workspace.summaries} />}
           />
         </aside>
       </section>
@@ -3262,6 +3271,48 @@ function TranscriptPanel({
             <ChevronRight size={17} />
           </button>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function RightWorkspacePanel({
+  activeTab,
+  agent,
+  onTabChange,
+  summariesCount,
+  summary,
+}: {
+  activeTab: RightWorkspaceTab;
+  agent: React.ReactNode;
+  onTabChange: (tab: RightWorkspaceTab) => void;
+  summariesCount: number;
+  summary: React.ReactNode;
+}) {
+  return (
+    <section className="right-workspace-panel" aria-label="右侧工作区">
+      <div className="right-workspace-switch" aria-label="右侧模块选择">
+        <button
+          className={activeTab === "summary" ? "active" : ""}
+          onClick={() => onTabChange("summary")}
+          type="button"
+        >
+          <FileText size={16} />
+          <span>结构化总结</span>
+          <small>{summariesCount ? `${summariesCount} 份` : "等待"}</small>
+        </button>
+        <button
+          className={activeTab === "agent" ? "active" : ""}
+          onClick={() => onTabChange("agent")}
+          type="button"
+        >
+          <MessageSquareText size={16} />
+          <span>Agent 问答</span>
+          <small>对话</small>
+        </button>
+      </div>
+      <div className="right-workspace-body">
+        {activeTab === "summary" ? summary : agent}
       </div>
     </section>
   );
