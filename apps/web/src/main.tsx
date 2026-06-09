@@ -1774,7 +1774,6 @@ const summaryTemplates = [
   { type: "MEETING_MINUTES", label: "会议纪要" },
   { type: "BLOG_OUTLINE", label: "博客大纲" },
   { type: "PPT_OUTLINE", label: "PPT 大纲" },
-  { type: "INTERVIEW_HOOKS", label: "面试钩子" },
 ];
 
 const diagnosticTabs: { id: DiagnosticsTab; label: string; meta: string }[] = [
@@ -3272,7 +3271,6 @@ function SummaryPanel({ summaries }: { summaries: SummaryAsset[] }) {
   const [activeType, setActiveType] = useState("CORE_POINTS");
   const activeSummary = summaries.find((summary) => summary.type === activeType) ?? summaries[0];
   const activeItems = parseSummary(activeSummary);
-  const hookItems = parseSummary(summaries.find((summary) => summary.type === "INTERVIEW_HOOKS"));
 
   return (
     <section className="panel summary-panel">
@@ -3309,15 +3307,8 @@ function SummaryPanel({ summaries }: { summaries: SummaryAsset[] }) {
           <p>点击上传后，这里会展示 /api/videos/:id/summaries 返回的总结资产。</p>
         )}
       </div>
-      <div className="mindmap">
-        {(hookItems.length ? hookItems : ["视频解析", "数据库状态机", "缓存与限流", "Agent 引用"]).map(
-          (item) => (
-            <div key={item}>{item}</div>
-          ),
-        )}
-      </div>
       <button className="text-button" type="button">
-        查看面试话术
+        一键生成对应的 PPT / 会议纪要 / 博客等
         <ArrowUpRight size={16} />
       </button>
     </section>

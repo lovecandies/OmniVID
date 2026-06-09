@@ -1860,26 +1860,6 @@ h2 {
   font-weight: 900;
 }
 
-.mindmap {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.mindmap div {
-  min-height: 58px;
-  padding: 12px;
-  border-radius: 16px;
-  color: var(--text);
-  background:
-    linear-gradient(135deg, rgba(45, 212, 191, 0.08), transparent),
-    var(--panel-soft);
-  box-shadow: inset 0 0 0 1px var(--line);
-  font-size: 13px;
-  font-weight: 800;
-}
-
 .text-button {
   display: inline-flex;
   align-items: center;
