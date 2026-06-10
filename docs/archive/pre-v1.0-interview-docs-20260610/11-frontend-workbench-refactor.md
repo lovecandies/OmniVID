@@ -1,17 +1,5 @@
 # OmniVid 前端工作台重构蓝图
 
-## Version 1.0 同步
-
-旧版前端重构蓝图已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/11-frontend-workbench-refactor.md`。1.0 前端已按“左中右工作台 + 右侧交互入口”完成多轮调整：
-
-- 左侧：上传、URL 导入、轻量 DAG/任务状态。
-- 中间：视频播放器、时间轴字幕滚动窗口、字幕搜索、点击跳转。
-- 右侧：结构化总结与 Agent 问答水平切换。
-- 右上入口：云端 LLM、诊断台、视频库、Embedding、知识库管理。
-- 诊断台默认收起，点击后显示 Runtime、MySQL、Redis、JVM、ASR、RAG、Qdrant、Recovery。
-
-1.0 前端不再追求花哨改版，主目标是紧凑、专业、可演示、能清晰支撑面试讲解。完整功能地图见 `docs/v1.0/feature-implementation-map.md`。
-
 ## 假设
 
 - 不改后端接口，不删除已实现功能，只调整页面信息架构。

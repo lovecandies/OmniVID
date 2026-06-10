@@ -1,27 +1,5 @@
 # OmniVid Spring 与事务面试钩子作战手册
 
-## Version 1.0 同步补强
-
-旧版文档已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/08-spring-transaction-interview-hooks.md`。1.0 的 Spring 叙事要从“分层 + profile + 条件装配 + 事务边界 + 统一异常”展开。
-
-1.0 真实落点：
-
-| 主题 | 落点 | 面试钩子 |
-| --- | --- | --- |
-| Controller 分层 | `VideoController`, `AgentController`, `KnowledgeBaseController`, `CloudLlmController`, `EmbeddingProviderController` | REST 设计、参数校验、错误返回 |
-| Service 编排 | `VideoService`, `AgentService`, `KnowledgeBaseService` | 业务流程编排、事务边界、异步边界 |
-| Repository | `VideoRepository`, `TranscriptRepository`, `SummaryRepository`, `KnowledgeBaseRepository` | SQL 显式化、索引、参数绑定 |
-| Profile | default vs docker | H2/local 与 MySQL/Redis/Qdrant 切换 |
-| 条件装配 | `@ConditionalOnProperty` | Redis/local 双实现、环境隔离 |
-| Provider 策略 | LLM Provider, Embedding Provider | Bean 注入、策略模式、配置持久化 |
-| 全局异常 | `GlobalExceptionHandler` | 结构化错误、URL/ASR/任务失败提示 |
-
-事务边界口径：
-
-```text
-上传阶段只把视频资产和 processing_job 创建成一个一致状态，不把 ffmpeg、ASR、LLM 这种长耗时操作包进大事务。异步 DAG 每个阶段独立推进状态，失败写入 `error_message`，前端和诊断台可见。这样事务短、锁时间短，也利于后续 MQ 化。
-```
-
 ## 1. 面试总叙事
 
 OmniVid 的 Spring 设计重点不是“会写 Controller”，而是把长视频上传、异步解析、Agent 问答拆成清晰的分层边界：

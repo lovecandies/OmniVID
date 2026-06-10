@@ -1,36 +1,5 @@
 # OmniVid MySQL 面试钩子作战手册
 
-## Version 1.0 同步补强
-
-旧版文档已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/05-mysql-interview-hooks.md`。当前 MySQL 口径以 1.0 真实 schema 为准：
-
-| 1.0 表 | 核心用途 | 面试钩子 |
-| --- | --- | --- |
-| `users` | demo 用户与后续登录预留 | 唯一索引、用户隔离、多租户扩展 |
-| `video_asset` | 视频资产、MD5、状态、存储路径 | `uk_video_md5`、幂等、状态字段、列表分页 |
-| `processing_job` | 异步解析任务状态机 | `version` 乐观锁、失败重试、状态流转 |
-| `transcript_segment` | ASR 字幕时间轴 | `video_id + start_ms` 联合索引、覆盖索引、回表 |
-| `summary_asset` | 核心观点/会议纪要/博客/PPT/面试钩子 | `uk_summary_video_type` 防重复生成 |
-| `chat_message` | Agent 问答历史 | 长期记忆、审计、冷热数据拆分 |
-| `knowledge_base` | 多视频知识库 | 唯一名称、知识库生命周期 |
-| `knowledge_base_video` | 知识库-视频多对多关系 | 唯一约束防重复加入、反向索引 |
-| `llm_provider_config` | DeepSeek Provider 配置 | Provider 唯一约束、Key mask、2.0 加密存储 |
-| `embedding_provider_config` | Embedding Provider 配置 | LLM/Embedding 解耦、provider 路由 |
-| `term_glossary_entry` | ASR 术语词库 | 唯一规则、启用状态索引、字幕质量优化 |
-
-1.0 验收证据：
-
-- `GET /api/runtime/status` 返回 MySQL connected。
-- `GET /api/mysql/explain` 展示 MD5 去重、字幕时间轴、失败任务扫描的索引计划。
-- `GET /api/videos` 可看到 MySQL 持久化视频库。
-- `POST /api/knowledge-bases/{id}/videos` 通过唯一约束避免重复关联。
-
-面试时不要只说“用了 MySQL”。要说：
-
-```text
-MySQL 在 OmniVid 里是事实层：视频是否存在、任务是否完成、字幕时间戳、总结资产、聊天记录和知识库关系都以 MySQL 为准。Redis 只做临时状态和性能层。这样面试官问唯一索引、联合索引、乐观锁、事务隔离、深分页、N+1、批量写入时，都能回到同一条业务链路。
-```
-
 ## 1. 面试总叙事
 
 OmniVid 里的 MySQL 不是单纯存数据，而是承担三件事：

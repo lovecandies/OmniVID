@@ -1,15 +1,5 @@
 # 02. MySQL 与 Redis 面试钩子设计
 
-## Version 1.0 同步
-
-旧版 MySQL/Redis 初稿已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/02-mysql-redis-hooks.md`。1.0 中 MySQL/Redis 已经真实接通 Docker 模式：
-
-- MySQL：`video_asset`, `processing_job`, `transcript_segment`, `summary_asset`, `chat_message`, `knowledge_base`, `knowledge_base_video`, `llm_provider_config`, `embedding_provider_config`, `term_glossary_entry`。
-- Redis：`video:lock:{md5}`, `omnivid:progress:{videoId}`, `omnivid:agent:rate:*`, `omnivid:agent:semantic:*`, `omnivid:agent:memory:last-question:*`。
-- 验收：`GET /api/runtime/status`, `GET /api/mysql/explain`, `GET /api/redis/inspect`。
-
-当前详细 MySQL 专项见 `docs/05-mysql-interview-hooks.md`，Redis 专项见 `docs/06-redis-interview-hooks.md`。
-
 ## MySQL 设计目标
 
 MySQL 不是简单存数据，而是负责：

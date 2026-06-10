@@ -1,17 +1,5 @@
 # 01. OmniVid 求职型架构蓝图
 
-## Version 1.0 同步
-
-旧版蓝图已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/01-career-architecture.md`。1.0 已经不只是“第一阶段规划”，而是完成了可运行闭环：
-
-- 前端工作台：上传、视频库、播放器、时间轴字幕、结构化总结、Agent 问答、诊断台、LLM/Embedding/知识库管理。
-- 后端主链路：本地上传、MD5 去重、异步 DAG、ffmpeg、whisper ASR、字幕清洗、DeepSeek 总结、Agent 问答。
-- 数据层：Docker MySQL/Redis/Qdrant 默认模式。
-- RAG 层：字幕检索、Qdrant 向量召回、本地 rerank、可点击时间戳引用。
-- 求职叙事：MySQL/Redis/并发/JVM/Spring/MQ/网络/OS/AI Agent 都可以从同一条视频解析链路展开。
-
-当前详细 1.0 架构见 `docs/v1.0/technical-architecture.md`，完整功能地图见 `docs/v1.0/feature-implementation-map.md`。
-
 ## 定位
 
 OmniVid 第一阶段是一个求职型 Java 后端项目，核心目标是展示：

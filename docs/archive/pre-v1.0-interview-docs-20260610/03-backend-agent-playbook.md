@@ -1,23 +1,5 @@
 # 03. Java 后端与 AI Agent 面试 Playbook
 
-## Version 1.0 同步
-
-旧版 playbook 已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/03-backend-agent-playbook.md`。1.0 的 Agent 已经具备完整可展示链路：
-
-```text
-InputGuardrail -> MemoryTool -> TranscriptRetrieveTool -> VectorRetrieveTool -> RerankTool -> CitationBuilderTool -> AnswerPolicyTool -> LlmGenerateTool -> ConfidenceGuard -> PersistTool
-```
-
-当前必须强调：
-
-- DeepSeek 只作为 Chat LLM。
-- Embedding 与 LLM 解耦，可接 Qwen/OpenAI/BGE，未配置时 local hash fallback。
-- Qdrant 是真实外部向量库。
-- 单视频 Agent 和多视频知识库 Agent 都能返回时间戳引用。
-- 无视频证据时不再生硬拒答，而是说明视频未提到，再给通用 LLM 回答。
-
-完整 Agent/RAG 专项见 `docs/09-ai-agent-rag-interview-hooks.md`，完整题库见 `docs/v1.0/full-interview-question-bank.md`。
-
 ## 回答总模板
 
 所有技术点都按这个结构回答：

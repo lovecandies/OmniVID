@@ -1,12 +1,5 @@
 # OmniVid 1.0 面试包
 
-配套文档：
-
-- [功能实现地图](feature-implementation-map.md)
-- [完整面试题库](full-interview-question-bank.md)
-- [技术架构](technical-architecture.md)
-- [黑盒验收清单](acceptance-checklist.md)
-
 ## 30 秒项目介绍
 
 OmniVid 是我做的一个 Java 后端主导的长视频 AI 解析系统。用户上传一个长视频后，后端会做 MD5 去重、创建异步解析任务、调用 ffmpeg 抽音频、用 whisper 做 ASR、生成时间轴字幕和结构化总结；然后 Agent 可以基于字幕、向量检索和 rerank 回答问题，并返回可点击的视频时间戳引用。MySQL 负责最终事实和状态一致性，Redis 负责防重、进度缓存、限流和短期记忆，Qdrant 负责字幕向量检索，DeepSeek 负责 LLM 生成。

@@ -1,30 +1,5 @@
 # OmniVid Java 并发与线程池面试钩子作战手册
 
-## Version 1.0 同步补强
-
-旧版文档已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/07-java-concurrency-interview-hooks.md`。1.0 的并发/JVM 叙事要围绕真实长耗时链路展开：
-
-```text
-上传请求只完成文件保存、MD5、任务创建 -> 后台线程池执行 DAG -> ffmpeg/whisper/summary/vector index 分阶段推进 -> MySQL 保存任务状态 -> Redis 缓存进度 -> SSE 推给前端。
-```
-
-1.0 真实落点：
-
-| 场景 | 类/接口 | 可讲八股 |
-| --- | --- | --- |
-| 本地 DAG 线程池 | `ProcessingExecutorConfig`, `ThreadPoolTaskExecutor` | core/max/queue/rejection、任务堆积、线程命名 |
-| 任务状态推进 | `ProcessingJobRepository`, `VideoService` | 乐观锁、状态机、异常处理 |
-| 线程池诊断 | `GET /api/jvm/thread-pool` | activeCount、queueSize、heap/non-heap、排查思路 |
-| 大文件上传 | `VideoService.uploadFile`, `LocalVideoStorageService` | 流式 IO、堆内存、OOM |
-| 子进程 | `FfmpegAudioExtractionService`, `WhisperAsrService`, `BurnedSubtitleOcrService` | `ProcessBuilder`、超时、日志、输出阻塞 |
-| SSE 进度 | `GET /api/videos/{videoId}/progress/stream` | HTTP 长连接、断线重连、单向推送 |
-
-面试主回答：
-
-```text
-OmniVid 的并发不是简单开线程，而是把长耗时视频处理从 HTTP 请求里拆出来。线程池负责执行本地 DAG，MySQL 记录最终状态，Redis 缓存最近进度，前端用 SSE 观察。这样既避免请求超时，也能把失败和重试做成可诊断状态。
-```
-
 ## 1. 面试总叙事
 
 OmniVid 的 Java 并发不是为了堆概念，而是为了解决长视频解析的三个真实问题：

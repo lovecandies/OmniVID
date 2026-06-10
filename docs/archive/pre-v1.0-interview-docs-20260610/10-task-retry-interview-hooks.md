@@ -1,27 +1,5 @@
 # OmniVid 失败任务补偿与重试面试钩子
 
-## Version 1.0 同步补强
-
-旧版文档已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/10-task-retry-interview-hooks.md`。1.0 的任务补偿不再只讲“失败重试按钮”，而是要和完整任务状态机、ASR 诊断、URL 导入失败、OCR 修复和向量重建放在一起讲。
-
-1.0 已实现的恢复入口：
-
-| 入口 | 场景 | 面试钩子 |
-| --- | --- | --- |
-| `POST /api/videos/{videoId}/retry` | 最新 FAILED job 重新投递解析 | 状态机边界、幂等、补偿任务 |
-| `GET /api/jobs/failures` | 查看失败任务列表 | 失败任务监控、运维面板 |
-| `GET /api/videos/{videoId}/asr/diagnostics` | ASR/ffmpeg 产物诊断 | 子进程日志、模型文件、音频产物 |
-| `POST /api/videos/{videoId}/asr/repair-encoding` | 修复乱码/繁体/术语问题 | 数据修复、向量重建、幂等修复 |
-| `POST /api/videos/{videoId}/asr/reprocess` | 重新 ASR | 重新投递长耗时任务 |
-| `POST /api/videos/{videoId}/asr/fuse-ocr` | OCR 融合写回 | 画面字幕强证据 |
-| `POST /api/vector-index/rebuild` | 重建 Qdrant 索引 | 向量库一致性、离线补偿 |
-
-重试边界：
-
-```text
-DONE 视频不应该重复进入解析队列，RUNNING 视频不应该并发重试，只有最新 FAILED job 才允许补偿。否则会出现状态回退、重复写字幕、重复调用 LLM、重复写向量的问题。
-```
-
 ## 已实现能力
 
 OmniVid 已支持失败视频解析任务的手动补偿重试：

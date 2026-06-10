@@ -131,19 +131,3 @@ remote: https://github.com/lovecandies/OmniVID.git
 2. 推送到 `https://github.com/lovecandies/OmniVID.git`。
 3. 创建并推送 `v1.0` 标签。
 4. 让 GitHub 仓库成为 OmniVid 1.0 的成果备份和求职展示入口。
-
-## 1.0 文档全量同步追加记录
-
-在用户追问“是否对所有面试文档进行更新”后，确认上一轮只新增了 `docs/v1.0/interview-pack.md`，没有逐个重写旧专项文档。随后用户要求：
-
-```text
-旧文档保留备份，基础上继续补全1.0所有文档。一定要详细全面，可以回溯我们所有对话查阅细节。包括功能实现，面试各个技术栈的埋的钩子，面试的问题等等。依旧上传到github,v1.0仓库中。
-```
-
-本次追加执行策略：
-
-1. 旧版文档备份到 `docs/archive/pre-v1.0-interview-docs-20260610/`。
-2. 新增 `docs/v1.0/feature-implementation-map.md`，按用户视角、后端落点、数据落点、验收方式和面试钩子拆解 1.0 全功能。
-3. 新增 `docs/v1.0/full-interview-question-bank.md`，覆盖 MySQL、Redis、Java 并发/JVM、Spring、MyBatis/JDBC、MQ、网络/OS、AI Agent/RAG、ASR/OCR、URL 导入、诊断台和 1.0 边界。
-4. 在旧专项文档顶部追加 `Version 1.0 同步补强`，使原文档路径也能直接看到当前实现口径。
-5. 更新根 `README.md` 和 `docs/v1.0/README.md`，把完整题库与功能地图加入 GitHub 入口。

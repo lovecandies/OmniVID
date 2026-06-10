@@ -1,31 +1,5 @@
 # OmniVid Redis 面试钩子作战手册
 
-## Version 1.0 同步补强
-
-旧版文档已备份到 `docs/archive/pre-v1.0-interview-docs-20260610/06-redis-interview-hooks.md`。1.0 默认后端启动方式是 `scripts/start-api-docker.ps1`，运行在 Docker MySQL/Redis/Qdrant 模式下，Redis 已不是纸面配置。
-
-1.0 Redis 真实落点：
-
-| Key 模式 | 业务含义 | 当前实现 | 面试追问 |
-| --- | --- | --- | --- |
-| `video:lock:{md5}` | 上传防重复提交 | `RedisDedupeLockService` | `SET NX EX/PX`、TTL、token、误删锁、MySQL 兜底 |
-| `omnivid:progress:{videoId}` | 任务进度缓存 | `RedisProgressCacheService` | Hash、TTL、SSE 重连、热点 Key |
-| `omnivid:agent:rate:{scope}:{window}` | Agent 限流 | `RedisAgentRateLimiter` | `INCR`、固定窗口、Lua 令牌桶演进 |
-| `omnivid:agent:semantic:{scope}:{questionHash}` | 精确问答缓存 | `RedisAgentAnswerCache` | 缓存命中、TTL、权限隔离、缓存污染 |
-| `omnivid:agent:memory:last-question:{videoId}` | 短期记忆 | `RedisAgentShortTermMemory` | 多轮追问、短期/长期记忆分层 |
-
-1.0 口径：
-
-```text
-Redis 负责高频、短期、可重建状态。MySQL 负责最终事实。Redis 锁失效不会造成视频资产重复，因为 MySQL 有 `uk_video_md5`；Redis 进度丢失不会造成任务丢失，因为 `processing_job` 仍在 MySQL；Redis 短期记忆过期不会丢审计，因为 `chat_message` 已持久化。
-```
-
-诚实边界：
-
-- 1.0 限流是固定窗口，不是滑动窗口。
-- 1.0 精确问题缓存不是真正语义相似缓存。
-- Redisson WatchDog 和 Lua 原子释放是 2.0 生产化增强。
-
 ## 1. 面试总叙事
 
 OmniVid 里的 Redis 不是为了“简历上写缓存”而引入，而是放在长视频解析链路的高频、短期、临时状态上：

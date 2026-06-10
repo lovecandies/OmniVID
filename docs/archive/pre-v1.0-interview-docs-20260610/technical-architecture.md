@@ -1,12 +1,5 @@
 # OmniVid 1.0 技术架构
 
-配套阅读：
-
-- [功能实现地图](feature-implementation-map.md)
-- [完整面试题库](full-interview-question-bank.md)
-- [面试包](interview-pack.md)
-- [验收清单](acceptance-checklist.md)
-
 ## 总体链路
 
 ```mermaid

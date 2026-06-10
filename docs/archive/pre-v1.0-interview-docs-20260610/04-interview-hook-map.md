@@ -1,31 +1,5 @@
 # 04. 八股考点速查地图
 
-## Version 1.0 同步补强
-
-旧版速查地图已经保留在 `docs/archive/pre-v1.0-interview-docs-20260610/`。当前文档以 OmniVid 1.0 的真实实现为准，面试时优先使用下面这条总线：
-
-```text
-本地视频上传 -> MD5 去重 -> MySQL/Redis 一致性 -> 本地 DAG -> ffmpeg 抽音频 -> whisper ASR -> 字幕清洗/OCR 诊断 -> 结构化总结 -> DeepSeek LLM -> Qdrant 向量检索 -> rerank -> Agent 引用回答 -> 多视频知识库
-```
-
-1.0 新增或强化的高频考点：
-
-| 考点 | 1.0 真实落点 | 一句话回答入口 |
-| --- | --- | --- |
-| MySQL 唯一索引 | `video_asset.uk_video_md5`, `summary_asset.uk_summary_video_type`, `knowledge_base_video.uk_knowledge_base_video` | 重复上传、重复总结、重复加入知识库都靠唯一约束兜底 |
-| MySQL 联合索引 | `idx_transcript_video_start(video_id,start_ms)` | 字幕跳转一定先按视频过滤，再按时间定位 |
-| Redis 分布式锁 | `video:lock:{md5}` | Redis 挡并发窗口，MySQL 唯一索引做最终事实 |
-| Redis 进度缓存 | `omnivid:progress:{videoId}` | SSE 断线或页面刷新后快速补偿任务进度 |
-| Java 线程池 | `omnividProcessingExecutor` | 长视频解析不能同步阻塞 HTTP |
-| JVM/大文件 | 流式保存、流式 MD5、ffmpeg 子进程 | 避免把 GB 级文件读进堆内存 |
-| Spring Profile | default/H2/local 与 docker/MySQL/Redis/Qdrant | 开发模式和真实中间件演示模式分离 |
-| ASR 精度 | `SubtitleTextSanitizer`, `TermGlossary`, OCR 对齐 | 简体化、乱码修复、技术词纠错、画面字幕强证据 |
-| RAG | 字幕片段 + Qdrant + rerank + citation | Agent 先检索证据再调用 LLM |
-| 多视频知识库 | `knowledge_base`, `knowledge_base_video` | 多视频聚合问答与观点对比 |
-| URL 导入边界 | `yt-dlp` + 结构化错误建议 | 1.0 不做平台反爬绕过，只做合规诊断 |
-
-完整 1.0 功能地图见 `docs/v1.0/feature-implementation-map.md`，完整题库见 `docs/v1.0/full-interview-question-bank.md`。
-
 ## 使用方式
 
 面试官问概念时，不要从定义开始背。先把问题落回 OmniVid 的真实场景，再展开关键词。
