@@ -29,7 +29,7 @@ public class TranscriptVectorSearch {
         if (store != null && store.connected()) {
             return store.indexName();
         }
-        return embeddingProvider.cloudBacked() ? "deepseek-memory-cache" : "local-hash-cache";
+        return embeddingProvider.providerName() + "-memory-cache";
     }
 
     public String vectorStoreMode() {
@@ -113,7 +113,9 @@ public class TranscriptVectorSearch {
             return new RebuildResult(false, store.mode(), store.indexName(), segments.size(), 0, "qdrant unavailable");
         }
         if (segments.isEmpty()) {
-            return new RebuildResult(true, store.mode(), store.indexName(), 0, 0, "no transcript segments to index");
+            boolean rebuilt = store.rebuild(List.of(), Map.of(), embeddingProvider.dimensions());
+            String message = rebuilt ? "qdrant index rebuilt with no transcript segments" : "qdrant rebuild failed";
+            return new RebuildResult(rebuilt, store.mode(), store.indexName(), 0, 0, message);
         }
 
         Map<Long, Map<Integer, Double>> segmentVectors = segments.stream()
@@ -122,14 +124,8 @@ public class TranscriptVectorSearch {
                         this::segmentVector,
                         (left, right) -> left
                 ));
-        Optional<List<QdrantVectorStore.SearchHit>> result = store.search(
-                segments,
-                segmentVectors.values().stream().filter(vector -> !vector.isEmpty()).findFirst().orElse(Map.of()),
-                segmentVectors,
-                embeddingProvider.dimensions(),
-                1
-        );
-        if (result.isEmpty()) {
+        boolean rebuilt = store.rebuild(segments, segmentVectors, embeddingProvider.dimensions());
+        if (!rebuilt) {
             return new RebuildResult(false, store.mode(), store.indexName(), segments.size(), 0, "qdrant rebuild failed");
         }
         int indexed = (int) segmentVectors.values().stream().filter(vector -> !vector.isEmpty()).count();

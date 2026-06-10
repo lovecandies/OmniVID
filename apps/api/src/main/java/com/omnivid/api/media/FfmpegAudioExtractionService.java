@@ -13,13 +13,16 @@ import org.springframework.stereotype.Service;
 @Service
 public class FfmpegAudioExtractionService {
     private final String ffmpegPath;
+    private final String audioFilter;
     private final Duration timeout;
 
     public FfmpegAudioExtractionService(
             @Value("${omnivid.ffmpeg.path}") String ffmpegPath,
+            @Value("${omnivid.ffmpeg.audio-filter:}") String audioFilter,
             @Value("${omnivid.ffmpeg.timeout}") Duration timeout
     ) {
         this.ffmpegPath = ffmpegPath;
+        this.audioFilter = audioFilter == null ? "" : audioFilter.trim();
         this.timeout = timeout;
     }
 
@@ -30,21 +33,7 @@ public class FfmpegAudioExtractionService {
 
         try {
             Files.deleteIfExists(outputPath);
-            Process process = new ProcessBuilder(command(inputPath, outputPath))
-                    .directory(Path.of(ffmpegPath).toAbsolutePath().getParent().toFile())
-                    .redirectErrorStream(true)
-                    .redirectOutput(logPath.toFile())
-                    .start();
-
-            boolean completed = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            if (!completed) {
-                process.destroyForcibly();
-                throw new AudioExtractionException("ffmpeg timed out after " + timeout.toSeconds() + "s");
-            }
-
-            if (process.exitValue() != 0) {
-                throw new AudioExtractionException("ffmpeg exited with code " + process.exitValue());
-            }
+            runFfmpeg(inputPath, outputPath, logPath, !audioFilter.isBlank());
 
             long sizeBytes = Files.size(outputPath);
             if (sizeBytes == 0) {
@@ -60,13 +49,42 @@ public class FfmpegAudioExtractionService {
         }
     }
 
-    private List<String> command(Path inputPath, Path outputPath) {
-        return List.of(
+    private void runFfmpeg(Path inputPath, Path outputPath, Path logPath, boolean enhanced) throws IOException, InterruptedException {
+        Process process = new ProcessBuilder(command(inputPath, outputPath, enhanced))
+                .directory(Path.of(ffmpegPath).toAbsolutePath().getParent().toFile())
+                .redirectErrorStream(true)
+                .redirectOutput(logPath.toFile())
+                .start();
+
+        boolean completed = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        if (!completed) {
+            process.destroyForcibly();
+            throw new AudioExtractionException("ffmpeg timed out after " + timeout.toSeconds() + "s");
+        }
+
+        if (process.exitValue() != 0) {
+            if (enhanced) {
+                Files.deleteIfExists(outputPath);
+                runFfmpeg(inputPath, outputPath, logPath, false);
+                return;
+            }
+            throw new AudioExtractionException("ffmpeg exited with code " + process.exitValue());
+        }
+    }
+
+    private List<String> command(Path inputPath, Path outputPath, boolean enhanced) {
+        java.util.ArrayList<String> command = new java.util.ArrayList<>(List.of(
                 ffmpegPath,
                 "-y",
                 "-i",
                 inputPath.toString(),
-                "-vn",
+                "-vn"
+        ));
+        if (enhanced) {
+            command.add("-af");
+            command.add(audioFilter);
+        }
+        command.addAll(List.of(
                 "-ac",
                 "1",
                 "-ar",
@@ -74,7 +92,8 @@ public class FfmpegAudioExtractionService {
                 "-acodec",
                 "pcm_s16le",
                 outputPath.toString()
-        );
+        ));
+        return command;
     }
 
     private String toLocalPath(Path path) {

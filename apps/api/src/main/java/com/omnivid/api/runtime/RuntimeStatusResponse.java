@@ -26,16 +26,18 @@ public record RuntimeStatusResponse(
 
     public record RuntimeLlmStatus(
             boolean chatEnabled,
-        boolean chatConfigured,
-        String baseUrl,
-        String model,
-        String embeddingProvider,
-        String embeddingDiagnostic,
-        String embeddingIndex,
-        int embeddingDimensions,
-        String vectorStoreMode,
-        boolean vectorStoreConnected,
-        String vectorStoreEndpoint
+            boolean chatConfigured,
+            String baseUrl,
+            String model,
+            String embeddingProvider,
+            String embeddingDiagnostic,
+            String embeddingIndex,
+            int embeddingDimensions,
+            String vectorStoreMode,
+            boolean vectorStoreConnected,
+            String vectorStoreEndpoint,
+            String rerankProvider,
+            String rerankDiagnostic
     ) {
     }
 }

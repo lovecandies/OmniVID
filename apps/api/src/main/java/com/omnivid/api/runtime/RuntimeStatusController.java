@@ -1,5 +1,6 @@
 package com.omnivid.api.runtime;
 
+import com.omnivid.api.agent.retrieval.AgentRerankService;
 import com.omnivid.api.agent.retrieval.TranscriptVectorSearch;
 import com.omnivid.api.llm.CloudLlmClient;
 import com.omnivid.api.llm.CloudLlmConfigResponse;
@@ -23,6 +24,7 @@ public class RuntimeStatusController {
     private final ObjectProvider<StringRedisTemplate> redis;
     private final CloudLlmClient llm;
     private final TranscriptVectorSearch vectorSearch;
+    private final AgentRerankService rerankService;
     private final String dedupeLockMode;
     private final String progressCacheMode;
     private final String rateLimitMode;
@@ -35,6 +37,7 @@ public class RuntimeStatusController {
             ObjectProvider<StringRedisTemplate> redis,
             CloudLlmClient llm,
             TranscriptVectorSearch vectorSearch,
+            AgentRerankService rerankService,
             @Value("${omnivid.dedupe-lock.mode:local}") String dedupeLockMode,
             @Value("${omnivid.progress-cache.mode:local}") String progressCacheMode,
             @Value("${omnivid.agent-rate-limit.mode:local}") String rateLimitMode,
@@ -46,6 +49,7 @@ public class RuntimeStatusController {
         this.redis = redis;
         this.llm = llm;
         this.vectorSearch = vectorSearch;
+        this.rerankService = rerankService;
         this.dedupeLockMode = dedupeLockMode;
         this.progressCacheMode = progressCacheMode;
         this.rateLimitMode = rateLimitMode;
@@ -71,7 +75,9 @@ public class RuntimeStatusController {
                         vectorSearch.dimensions(),
                         vectorSearch.vectorStoreMode(),
                         vectorSearch.vectorStoreConnected(),
-                        vectorSearch.vectorStoreEndpoint()
+                        vectorSearch.vectorStoreEndpoint(),
+                        rerankService.providerName(),
+                        rerankService.diagnostic()
                 )
         );
     }

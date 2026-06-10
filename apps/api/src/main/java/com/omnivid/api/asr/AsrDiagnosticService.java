@@ -5,6 +5,8 @@ import com.omnivid.api.job.ProcessingJob;
 import com.omnivid.api.job.ProcessingJobRepository;
 import com.omnivid.api.storage.LocalVideoStorageService;
 import com.omnivid.api.transcript.TranscriptRepository;
+import com.omnivid.api.transcript.TranscriptSegment;
+import com.omnivid.api.transcript.SubtitleTextSanitizer;
 import com.omnivid.api.video.VideoAsset;
 import com.omnivid.api.video.VideoRepository;
 import java.io.IOException;
@@ -21,23 +23,46 @@ public class AsrDiagnosticService {
     private final ProcessingJobRepository jobs;
     private final TranscriptRepository transcripts;
     private final LocalVideoStorageService storage;
+    private final SubtitleTextSanitizer sanitizer;
     private final String asrPath;
     private final String modelPath;
+    private final String audioFilter;
+    private final String resolvedModelPath;
+    private final String language;
+    private final String initialPrompt;
+    private final int beamSize;
+    private final int bestOf;
+    private final int maxLen;
 
     public AsrDiagnosticService(
             VideoRepository videos,
             ProcessingJobRepository jobs,
             TranscriptRepository transcripts,
             LocalVideoStorageService storage,
+            SubtitleTextSanitizer sanitizer,
             @Value("${omnivid.asr.path}") String asrPath,
-            @Value("${omnivid.asr.model}") String modelPath
+            @Value("${omnivid.asr.model}") String modelPath,
+            @Value("${omnivid.ffmpeg.audio-filter:}") String audioFilter,
+            @Value("${omnivid.asr.language:auto}") String language,
+            @Value("${omnivid.asr.initial-prompt:}") String initialPrompt,
+            @Value("${omnivid.asr.beam-size:5}") int beamSize,
+            @Value("${omnivid.asr.best-of:5}") int bestOf,
+            @Value("${omnivid.asr.max-len:72}") int maxLen
     ) {
         this.videos = videos;
         this.jobs = jobs;
         this.transcripts = transcripts;
         this.storage = storage;
+        this.sanitizer = sanitizer;
         this.asrPath = asrPath;
         this.modelPath = modelPath;
+        this.audioFilter = audioFilter == null ? "" : audioFilter.trim();
+        this.resolvedModelPath = resolveBestModel(modelPath);
+        this.language = language;
+        this.initialPrompt = initialPrompt;
+        this.beamSize = beamSize;
+        this.bestOf = bestOf;
+        this.maxLen = maxLen;
     }
 
     public AsrDiagnosticResponse inspect(long videoId) {
@@ -57,8 +82,14 @@ public class AsrDiagnosticService {
                 video.originalName(),
                 video.status(),
                 asrPath,
-                modelPath,
-                Files.isRegularFile(Path.of(modelPath)),
+                resolvedModelPath,
+                audioFilter,
+                language,
+                beamSize,
+                bestOf,
+                maxLen,
+                promptPreview(),
+                Files.isRegularFile(Path.of(resolvedModelPath)),
                 Files.isRegularFile(audioPath),
                 sizeOrZero(audioPath),
                 Files.isRegularFile(asrJsonPath),
@@ -66,11 +97,39 @@ public class AsrDiagnosticService {
                 Files.isRegularFile(asrLogPath),
                 sizeOrZero(asrLogPath),
                 transcripts.countByVideoId(videoId),
+                inspectQuality(videoId),
                 job == null ? "-" : job.currentStep(),
                 job == null ? "-" : job.status(),
                 job == null ? "" : job.errorMessage(),
                 readTail(ffmpegLogPath),
                 readTail(asrLogPath)
+        );
+    }
+
+    private AsrQualityResponse inspectQuality(long videoId) {
+        StringBuilder builder = new StringBuilder();
+        for (TranscriptSegment segment : transcripts.listByVideoId(videoId)) {
+            if (segment.content().isBlank()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            builder.append(segment.content());
+            if (builder.length() >= 600) {
+                break;
+            }
+        }
+        String sample = sanitizer.normalize(builder.toString());
+        SubtitleTextSanitizer.QualityReport report = sanitizer.inspect(sample);
+        return new AsrQualityResponse(
+                report.garbledRisk(),
+                report.replacementCount(),
+                report.controlCount(),
+                report.suspiciousLatinCount(),
+                report.traditionalCount(),
+                report.cjkCount(),
+                sample.length() <= 160 ? sample : sample.substring(0, 160)
         );
     }
 
@@ -80,6 +139,14 @@ public class AsrDiagnosticService {
         } catch (IOException exception) {
             return 0;
         }
+    }
+
+    private String promptPreview() {
+        String text = initialPrompt == null ? "" : initialPrompt.replaceAll("\\s+", " ").trim();
+        if (text.isBlank()) {
+            return "technical hotword fallback";
+        }
+        return text.length() <= 180 ? text : text.substring(0, 180) + "...";
     }
 
     private String readTail(Path path) {
@@ -92,5 +159,26 @@ public class AsrDiagnosticService {
         } catch (IOException exception) {
             return "";
         }
+    }
+
+    private String resolveBestModel(String configuredModelPath) {
+        Path configured = Path.of(configuredModelPath).toAbsolutePath().normalize();
+        Path modelDir = configured.getParent();
+        if (modelDir == null) {
+            return configured.toString();
+        }
+        for (String candidate : java.util.List.of(
+                "ggml-medium.bin",
+                "ggml-small.bin",
+                "ggml-base.bin",
+                "ggml-tiny.bin",
+                configured.getFileName().toString()
+        )) {
+            Path path = modelDir.resolve(candidate).toAbsolutePath().normalize();
+            if (Files.isRegularFile(path)) {
+                return path.toString();
+            }
+        }
+        return configured.toString();
     }
 }

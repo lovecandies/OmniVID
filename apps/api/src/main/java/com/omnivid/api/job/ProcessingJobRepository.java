@@ -41,6 +41,18 @@ public class ProcessingJobRepository {
         return findById(keyHolder.getKey().longValue()).orElseThrow();
     }
 
+    public ProcessingJob createAsrReprocess(long videoId, int retryCount) {
+        GeneratedKeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbc.sql("""
+                INSERT INTO processing_job (video_id, current_step, status, progress, retry_count, started_at)
+                VALUES (:videoId, 'ASR_REPROCESS_QUEUED', 'RUNNING', 10, :retryCount, CURRENT_TIMESTAMP)
+                """)
+                .param("videoId", videoId)
+                .param("retryCount", retryCount)
+                .update(keyHolder, "id");
+        return findById(keyHolder.getKey().longValue()).orElseThrow();
+    }
+
     public Optional<ProcessingJob> findById(long id) {
         return jdbc.sql("SELECT * FROM processing_job WHERE id = :id")
                 .param("id", id)

@@ -9,9 +9,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class TranscriptRepository {
     private final JdbcClient jdbc;
+    private final SubtitleTextSanitizer sanitizer;
 
-    public TranscriptRepository(JdbcClient jdbc) {
+    public TranscriptRepository(JdbcClient jdbc, SubtitleTextSanitizer sanitizer) {
         this.jdbc = jdbc;
+        this.sanitizer = sanitizer;
     }
 
     public void insertBatch(long videoId, List<TranscriptDraft> drafts) {
@@ -26,10 +28,72 @@ public class TranscriptRepository {
                     .param("startMs", draft.startMs())
                     .param("endMs", draft.endMs())
                     .param("speaker", draft.speaker())
-                    .param("content", draft.content())
-                    .param("tokenCount", draft.tokenCount())
+                    .param("content", sanitizer.normalizeTranscript(draft.content()))
+                    .param("tokenCount", tokenCount(draft.content()))
                     .update();
         }
+    }
+
+    public void replaceByVideoId(long videoId, List<TranscriptDraft> drafts) {
+        jdbc.sql("DELETE FROM transcript_segment WHERE video_id = :videoId")
+                .param("videoId", videoId)
+                .update();
+        insertBatch(videoId, drafts);
+    }
+
+    public int repairEncodingByVideoId(long videoId) {
+        List<TranscriptSegment> segments = rawListByVideoId(videoId);
+        int repaired = 0;
+        for (TranscriptSegment segment : segments) {
+            SubtitleTextSanitizer.RepairResult result = sanitizer.repairTranscriptIfBetter(segment.content());
+            if (!result.changed()) {
+                continue;
+            }
+            jdbc.sql("""
+                    UPDATE transcript_segment
+                    SET content = :content, token_count = :tokenCount
+                    WHERE id = :id
+                    """)
+                    .param("id", segment.id())
+                    .param("content", result.text())
+                    .param("tokenCount", tokenCount(result.text()))
+                    .update();
+            repaired++;
+        }
+        return repaired;
+    }
+
+    public int updateContentBySegmentIndex(long videoId, int segmentIndex, String content) {
+        String normalized = sanitizer.normalizeTranscript(content);
+        if (normalized.isBlank()) {
+            return 0;
+        }
+        return jdbc.sql("""
+                UPDATE transcript_segment
+                SET content = :content, token_count = :tokenCount
+                WHERE video_id = :videoId AND segment_index = :segmentIndex
+                """)
+                .param("videoId", videoId)
+                .param("segmentIndex", segmentIndex)
+                .param("content", normalized)
+                .param("tokenCount", tokenCount(normalized))
+                .update();
+    }
+
+    public int updateContentById(long id, String content) {
+        String normalized = sanitizer.normalizeTranscript(content);
+        if (normalized.isBlank()) {
+            return 0;
+        }
+        return jdbc.sql("""
+                UPDATE transcript_segment
+                SET content = :content, token_count = :tokenCount
+                WHERE id = :id
+                """)
+                .param("id", id)
+                .param("content", normalized)
+                .param("tokenCount", tokenCount(normalized))
+                .update();
     }
 
     public boolean existsByVideoId(long videoId) {
@@ -86,7 +150,32 @@ public class TranscriptRepository {
                 .list();
     }
 
+    private List<TranscriptSegment> rawListByVideoId(long videoId) {
+        return jdbc.sql("""
+                SELECT * FROM transcript_segment
+                WHERE video_id = :videoId
+                ORDER BY segment_index ASC
+                """)
+                .param("videoId", videoId)
+                .query(this::rawMap)
+                .list();
+    }
+
     private TranscriptSegment map(ResultSet rs, int rowNum) throws SQLException {
+        TranscriptSegment segment = rawMap(rs, rowNum);
+        return new TranscriptSegment(
+                segment.id(),
+                segment.videoId(),
+                segment.segmentIndex(),
+                segment.startMs(),
+                segment.endMs(),
+                segment.speaker(),
+                sanitizer.repairTranscriptIfBetter(segment.content()).text(),
+                segment.tokenCount()
+        );
+    }
+
+    private TranscriptSegment rawMap(ResultSet rs, int rowNum) throws SQLException {
         return new TranscriptSegment(
                 rs.getLong("id"),
                 rs.getLong("video_id"),
@@ -97,5 +186,9 @@ public class TranscriptRepository {
                 rs.getString("content"),
                 rs.getInt("token_count")
         );
+    }
+
+    private int tokenCount(String content) {
+        return Math.max(1, sanitizer.normalizeTranscript(content).length() / 2);
     }
 }

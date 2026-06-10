@@ -24,20 +24,46 @@ omnivid:
   storage-root: ${OMNIVID_STORAGE_ROOT:${user.dir}/storage}
   ffmpeg:
     path: ${OMNIVID_FFMPEG_PATH:E:/video/tools/ffmpeg/runtime/ffmpeg-n7.1-latest-win64-gpl-shared-7.1/bin/ffmpeg.exe}
+    audio-filter: '${OMNIVID_FFMPEG_AUDIO_FILTER:highpass=f=100,lowpass=f=7600,afftdn=nf=-28,dynaudnorm=f=150:g=15,loudnorm=I=-16:TP=-1.5:LRA=11}'
     timeout: 60s
   url-import:
     ytdlp-path: ${OMNIVID_YTDLP_PATH:E:/video/tools/url/yt-dlp.exe}
     timeout: ${OMNIVID_YTDLP_TIMEOUT:300s}
   asr:
     path: ${OMNIVID_ASR_PATH:E:/video/tools/asr/runtime/Release/whisper-cli.exe}
-    model: ${OMNIVID_ASR_MODEL:E:/video/tools/asr/ggml-tiny.bin}
+    model: ${OMNIVID_ASR_MODEL:E:/video/tools/asr/ggml-base.bin}
+    language: ${OMNIVID_ASR_LANGUAGE:auto}
+    initial-prompt: '${OMNIVID_ASR_PROMPT:Technical video transcript. Preserve English technical terms: Java backend, MySQL, Redis, Redisson, SETNX, MyBatis, Spring Boot, Spring Cloud, JVM, JDK, GC, OOM, CAS, AQS, MQ, RocketMQ, RabbitMQ, Docker, Qdrant, Embedding, Rerank, Vector, RAG, Agent, DeepSeek, Qwen, ChatGPT, Claude Code, Codex. Use Simplified Chinese for Chinese speech. Do not output Traditional Chinese or mojibake.}'
+    beam-size: ${OMNIVID_ASR_BEAM_SIZE:5}
+    best-of: ${OMNIVID_ASR_BEST_OF:5}
+    max-len: ${OMNIVID_ASR_MAX_LEN:72}
     timeout: 180s
+  ocr:
+    python-path: ${OMNIVID_OCR_PYTHON_PATH:python}
+    script-path: ${OMNIVID_OCR_SCRIPT_PATH:E:/video/scripts/ocr_burned_subtitles.py}
+    min-confidence: ${OMNIVID_OCR_MIN_CONFIDENCE:0.88}
+    timeout: ${OMNIVID_OCR_TIMEOUT:300s}
   llm:
     enabled: ${OMNIVID_LLM_ENABLED:false}
     api-key: ${OMNIVID_LLM_API_KEY:}
     base-url: ${OMNIVID_LLM_BASE_URL:https://api.deepseek.com/v1}
     model: ${OMNIVID_LLM_MODEL:deepseek-chat}
     timeout: ${OMNIVID_LLM_TIMEOUT:60s}
+  embedding:
+    enabled: ${OMNIVID_EMBEDDING_ENABLED:false}
+    mode: ${OMNIVID_EMBEDDING_MODE:local}
+    api-key: ${OMNIVID_EMBEDDING_API_KEY:}
+    base-url: ${OMNIVID_EMBEDDING_BASE_URL:}
+    model: ${OMNIVID_EMBEDDING_MODEL:}
+    timeout: ${OMNIVID_EMBEDDING_TIMEOUT:30s}
+  rerank:
+    enabled: ${OMNIVID_RERANK_ENABLED:true}
+    mode: ${OMNIVID_RERANK_MODE:local}
+    base-url: ${OMNIVID_RERANK_BASE_URL:}
+    endpoint: ${OMNIVID_RERANK_ENDPOINT:/rerank}
+    api-key: ${OMNIVID_RERANK_API_KEY:}
+    model: ${OMNIVID_RERANK_MODEL:bge-reranker-v2-m3}
+    timeout: ${OMNIVID_RERANK_TIMEOUT:15s}
   dedupe-lock:
     mode: local
   progress-cache:

@@ -77,6 +77,23 @@ CREATE TABLE IF NOT EXISTS chat_message (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS knowledge_base (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(120) NOT NULL,
+  description VARCHAR(500) NOT NULL DEFAULT '',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uk_knowledge_base_name UNIQUE (name)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_base_video (
+  knowledge_base_id BIGINT NOT NULL,
+  video_id BIGINT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uk_knowledge_base_video UNIQUE (knowledge_base_id, video_id),
+  KEY idx_kb_video_video (video_id, knowledge_base_id)
+);
+
 CREATE TABLE IF NOT EXISTS llm_provider_config (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   provider_name VARCHAR(80) NOT NULL,
@@ -92,4 +109,33 @@ CREATE TABLE IF NOT EXISTS llm_provider_config (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uk_llm_provider UNIQUE (provider_name, base_url, model)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_provider_config (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  provider_name VARCHAR(80) NOT NULL,
+  mode VARCHAR(32) NOT NULL,
+  base_url VARCHAR(255) NOT NULL,
+  model VARCHAR(120) NOT NULL,
+  api_key_encoded LONGTEXT NOT NULL,
+  api_key_masked VARCHAR(32) NOT NULL,
+  timeout_seconds INT NOT NULL DEFAULT 30,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  active BOOLEAN NOT NULL DEFAULT FALSE,
+  last_test_status VARCHAR(32),
+  last_test_message VARCHAR(255),
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uk_embedding_provider UNIQUE (mode, base_url, model)
+);
+
+CREATE TABLE IF NOT EXISTS term_glossary_entry (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  source_pattern VARCHAR(255) NOT NULL,
+  replacement VARCHAR(255) NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uk_term_glossary_entry UNIQUE (source_pattern, replacement),
+  KEY idx_term_glossary_enabled (enabled, updated_at)
 );

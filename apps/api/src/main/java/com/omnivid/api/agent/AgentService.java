@@ -3,7 +3,10 @@ package com.omnivid.api.agent;
 import com.omnivid.api.common.ApiException;
 import com.omnivid.api.agent.cache.AgentAnswerCache;
 import com.omnivid.api.agent.memory.AgentShortTermMemory;
+import com.omnivid.api.agent.retrieval.AgentRerankService;
 import com.omnivid.api.agent.retrieval.TranscriptVectorSearch;
+import com.omnivid.api.knowledge.KnowledgeBaseDetailResponse;
+import com.omnivid.api.knowledge.KnowledgeBaseService;
 import com.omnivid.api.ratelimit.AgentRateLimiter;
 import com.omnivid.api.llm.CloudLlmClient;
 import com.omnivid.api.llm.CloudLlmResult;
@@ -40,6 +43,8 @@ public class AgentService {
     private final AgentAnswerCache answerCache;
     private final AgentShortTermMemory shortTermMemory;
     private final TranscriptVectorSearch vectorSearch;
+    private final AgentRerankService rerankService;
+    private final KnowledgeBaseService knowledgeBases;
     private final CloudLlmClient llm;
 
     public AgentService(
@@ -50,6 +55,8 @@ public class AgentService {
             AgentAnswerCache answerCache,
             AgentShortTermMemory shortTermMemory,
             TranscriptVectorSearch vectorSearch,
+            AgentRerankService rerankService,
+            KnowledgeBaseService knowledgeBases,
             CloudLlmClient llm
     ) {
         this.videos = videos;
@@ -59,6 +66,8 @@ public class AgentService {
         this.answerCache = answerCache;
         this.shortTermMemory = shortTermMemory;
         this.vectorSearch = vectorSearch;
+        this.rerankService = rerankService;
+        this.knowledgeBases = knowledgeBases;
         this.llm = llm;
     }
 
@@ -114,6 +123,7 @@ public class AgentService {
                 evidence.score(),
                 evidence.vectorScore(),
                 evidence.keywordScore(),
+                evidence.rerankScore(),
                 confidenceLevel,
                 generatedAnswer
         );
@@ -171,6 +181,21 @@ public class AgentService {
 
     public AgentAskResponse askDefaultKnowledgeBase(AgentAskRequest request) {
         String scope = "kb:default";
+        return askKnowledgeBaseScope(scope, "默认知识库", videos.listVideos(), request);
+    }
+
+    public AgentAskResponse askKnowledgeBase(long knowledgeBaseId, AgentAskRequest request) {
+        KnowledgeBaseDetailResponse detail = knowledgeBases.detail(knowledgeBaseId);
+        String scope = "kb:" + knowledgeBaseId;
+        return askKnowledgeBaseScope(scope, detail.knowledgeBase().name(), detail.videos(), request);
+    }
+
+    private AgentAskResponse askKnowledgeBaseScope(
+            String scope,
+            String scopeName,
+            List<VideoAsset> videoAssets,
+            AgentAskRequest request
+    ) {
         requireAllowed(scope);
         Optional<GuardrailDecision> guardrail = inspectQuestion(request.question());
         if (guardrail.isPresent()) {
@@ -186,18 +211,18 @@ public class AgentService {
         if (cached.isPresent()) {
             return cached.get();
         }
-        List<VideoAsset> videoAssets = videos.listVideos();
         List<Long> videoIds = videoAssets.stream().map(VideoAsset::id).toList();
         List<TranscriptSegment> segments = transcripts.listByVideoIds(videoIds);
         RetrievalResult retrieval = retrieveEvidence(segments, request.question());
         Evidence evidence = retrieval.bestEvidence();
         List<AgentCitation> citations = buildCitations(retrieval.citableEvidence(), videoAssets);
         String citation = citations.isEmpty() ? "" : citations.getFirst().citation();
-        GeneratedAnswer generatedAnswer = generateKnowledgeBaseAnswer(request.question(), evidence, citations, videoAssets.size());
+        GeneratedAnswer generatedAnswer = generateKnowledgeBaseAnswer(request.question(), evidence, citations, videoAssets.size(), scopeName);
         String answer = generatedAnswer.answer();
         long citedVideoId = evidence.hit() == null ? 0 : evidence.hit().videoId();
         String confidenceLevel = confidenceLevel(evidence);
         List<AgentTraceStep> trace = buildKnowledgeBaseTrace(
+                scopeName,
                 videoAssets.size(),
                 segments.size(),
                 retrieval.usableCount(),
@@ -208,6 +233,7 @@ public class AgentService {
                 evidence.score(),
                 evidence.vectorScore(),
                 evidence.keywordScore(),
+                evidence.rerankScore(),
                 confidenceLevel,
                 citedVideoId > 0,
                 generatedAnswer
@@ -242,22 +268,32 @@ public class AgentService {
 
         List<String> queryTerms = queryTerms(question);
         List<TranscriptVectorSearch.VectorCandidate> candidates = vectorSearch.search(segments, question, TOP_K * 4);
-        List<Evidence> usable = candidates.stream()
+        List<AgentRerankService.RerankInput> rerankInputs = candidates.stream()
                 .map(candidate -> {
                     int keywordScore = score(candidate.segment().content(), queryTerms);
-                    return new Evidence(
+                    return new AgentRerankService.RerankInput(
                             candidate.segment(),
-                            evidenceScore(candidate.score(), keywordScore),
                             candidate.score(),
-                            keywordScore
+                            keywordScore,
+                            evidenceScore(candidate.score(), keywordScore)
                     );
                 })
-                .filter(this::usableEvidence)
-                .sorted(Comparator.comparingInt(Evidence::score).reversed()
+                .filter(input -> input.keywordScore() > 0 || input.vectorScore() >= SEMANTIC_EVIDENCE_THRESHOLD)
+                .toList();
+        List<Evidence> usable = rerankService.rerank(question, rerankInputs, rerankInputs.size()).stream()
+                .map(candidate -> {
+                    AgentRerankService.RerankInput input = candidate.input();
+                    int score = Math.max(input.baseScore(), (int) Math.round(candidate.rerankScore() * 10));
+                    return new Evidence(input.segment(), score, input.vectorScore(), input.keywordScore(), candidate.rerankScore());
+                })
+                .sorted(Comparator.comparingDouble(Evidence::rerankScore).reversed()
+                        .thenComparing(Comparator.comparingInt(Evidence::score).reversed())
                         .thenComparing(Comparator.comparingDouble(Evidence::vectorScore).reversed())
                         .thenComparing(evidence -> evidence.hit().startMs()))
                 .toList();
-        List<Evidence> topEvidence = usable.stream().limit(TOP_K).toList();
+        List<Evidence> topEvidence = comparisonQuestion(question)
+                ? diversifiedByVideo(usable, TOP_K)
+                : usable.stream().limit(TOP_K).toList();
         List<Evidence> citable = topEvidence.stream().filter(this::citableEvidence).toList();
         return new RetrievalResult(
                 candidates.size(),
@@ -266,6 +302,28 @@ public class AgentService {
                 citable,
                 Math.max(0, topEvidence.size() - citable.size())
         );
+    }
+
+    private List<Evidence> diversifiedByVideo(List<Evidence> evidence, int limit) {
+        List<Evidence> selected = new ArrayList<>();
+        Set<Long> seenVideoIds = new java.util.HashSet<>();
+        for (Evidence item : evidence) {
+            if (item.hit() != null && seenVideoIds.add(item.hit().videoId())) {
+                selected.add(item);
+                if (selected.size() >= limit) {
+                    return selected;
+                }
+            }
+        }
+        for (Evidence item : evidence) {
+            if (!selected.contains(item)) {
+                selected.add(item);
+                if (selected.size() >= limit) {
+                    return selected;
+                }
+            }
+        }
+        return selected;
     }
 
     private int evidenceScore(double vectorScore, int keywordScore) {
@@ -278,7 +336,9 @@ public class AgentService {
 
     private boolean citableEvidence(Evidence evidence) {
         return evidence.hit() != null
-                && (evidence.keywordScore() >= 2 || evidence.vectorScore() >= CITATION_SEMANTIC_THRESHOLD);
+                && (evidence.keywordScore() >= 2
+                || evidence.vectorScore() >= CITATION_SEMANTIC_THRESHOLD
+                || evidence.rerankScore() >= 0.68);
     }
 
     private void requireAllowed(String scope) {
@@ -552,7 +612,8 @@ public class AgentService {
             String question,
             Evidence evidence,
             List<AgentCitation> citations,
-            int videoCount
+            int videoCount,
+            String scopeName
     ) {
         String localAnswer = buildKnowledgeBaseAnswer(question, evidence, videoCount);
         if (question.contains("你是谁")) {
@@ -566,32 +627,37 @@ public class AgentService {
                     用中文回答，表达自然、具体、简洁。
                     """;
             String userPrompt = """
-                    默认知识库视频数：%d
+                    知识库：%s
+                    知识库视频数：%d
                     问题：%s
 
                     请给出通用回答，不要编造来源视频或时间戳，不要说“知识库视频中提到”。
-                    """.formatted(videoCount, question);
+                    """.formatted(scopeName, videoCount, question);
 
             return llm.complete(systemPrompt, userPrompt, 900)
                     .map(result -> prefixedCloudAnswer(result, noKnowledgeBaseEvidencePrefix(question, videoCount)))
                     .orElseGet(() -> GeneratedAnswer.local(localAnswer));
         }
 
+        boolean comparison = comparisonQuestion(question);
         String systemPrompt = """
-                你是 OmniVid 的默认知识库问答 Agent。
+                你是 OmniVid 的多视频知识库问答 Agent。
                 你只能基于用户提供的跨视频 citations / ASR 字幕证据回答，不能编造视频外事实。
                 不能生成新的时间戳，不能伪造 citation，只能复用 citations 里出现的来源、时间戳和片段。
+                如果用户要求对比多个视频观点，需要按来源视频分别概括相同点、差异点和可追溯证据。
                 如果证据不足，直接说明证据不足。
                 """;
         String userPrompt = """
-                默认知识库视频数：%d
+                知识库：%s
+                知识库视频数：%d
                 问题：%s
+                是否对比问题：%s
 
                 可用 citations：
                 %s
 
-                请用中文回答，2 到 5 句。需要说明答案来自这些视频证据，不要输出 citations 外的新来源。
-                """.formatted(videoCount, question, citationEvidenceBlock(citations));
+                请用中文回答。需要说明答案来自这些视频证据，不要输出 citations 外的新来源。
+                """.formatted(scopeName, videoCount, question, comparison ? "是" : "否", citationEvidenceBlock(citations));
 
         return llm.complete(systemPrompt, userPrompt, 900)
                 .map(this::cloudAnswer)
@@ -697,6 +763,21 @@ public class AgentService {
         ).contains(normalized);
     }
 
+    private boolean comparisonQuestion(String question) {
+        String normalized = question.toLowerCase(Locale.ROOT);
+        return containsAny(normalized,
+                "对比",
+                "比较",
+                "差异",
+                "不同",
+                "多个视频",
+                "各个视频",
+                "观点",
+                "compare",
+                "comparison",
+                "difference");
+    }
+
     private int score(String content, List<String> terms) {
         String normalized = content.toLowerCase(Locale.ROOT);
         int score = 0;
@@ -734,6 +815,7 @@ public class AgentService {
             int confidenceScore,
             double vectorScore,
             int keywordScore,
+            double rerankScore,
             String confidenceLevel,
             GeneratedAnswer generatedAnswer
     ) {
@@ -767,14 +849,18 @@ public class AgentService {
         trace.add(new AgentTraceStep(
                 "RerankTool",
                 evidenceCount > 0 ? "done" : "skip",
-                "topK=" + Math.min(TOP_K, evidenceCount) + ", keywordScore=" + keywordScore
+                "provider=" + rerankService.providerName()
+                        + ", topK=" + Math.min(TOP_K, evidenceCount)
+                        + ", keywordScore=" + keywordScore
+                        + ", rerankScore=" + formatScore(rerankScore)
+                        + ", diagnostic=" + rerankService.diagnostic()
         ));
         trace.add(new AgentTraceStep(
                 "CitationBuilderTool",
                 citationCount > 0 ? "done" : "miss",
                 "citations=" + citationCount
                         + ", rejected=" + rejectedByStrictFilter
-                        + ", strictFilter=keyword>=2|cosine>=0.72"
+                        + ", strictFilter=keyword>=2|cosine>=0.72|rerank>=0.68"
         ));
         trace.add(new AgentTraceStep(
                 "AnswerPolicyTool",
@@ -802,6 +888,7 @@ public class AgentService {
     }
 
     private List<AgentTraceStep> buildKnowledgeBaseTrace(
+            String scopeName,
             int videoCount,
             int segmentCount,
             int evidenceCount,
@@ -812,6 +899,7 @@ public class AgentService {
             int confidenceScore,
             double vectorScore,
             int keywordScore,
+            double rerankScore,
             String confidenceLevel,
             boolean persisted,
             GeneratedAnswer generatedAnswer
@@ -825,7 +913,7 @@ public class AgentService {
         trace.add(new AgentTraceStep(
                 "ScopeTool",
                 videoCount > 0 ? "done" : "miss",
-                "default knowledge base videos=" + videoCount
+                "knowledgeBase=" + scopeName + ", videos=" + videoCount
         ));
         trace.add(new AgentTraceStep(
                 "TranscriptRetrieveTool",
@@ -846,14 +934,18 @@ public class AgentService {
         trace.add(new AgentTraceStep(
                 "RerankTool",
                 evidenceCount > 0 ? "done" : "skip",
-                "topK=" + Math.min(TOP_K, evidenceCount) + ", keywordScore=" + keywordScore
+                "provider=" + rerankService.providerName()
+                        + ", topK=" + Math.min(TOP_K, evidenceCount)
+                        + ", keywordScore=" + keywordScore
+                        + ", rerankScore=" + formatScore(rerankScore)
+                        + ", diagnostic=" + rerankService.diagnostic()
         ));
         trace.add(new AgentTraceStep(
                 "CitationBuilderTool",
                 citationCount > 0 ? "done" : "miss",
                 "citations=" + citationCount
                         + ", rejected=" + rejectedByStrictFilter
-                        + ", strictFilter=keyword>=2|cosine>=0.72"
+                        + ", strictFilter=keyword>=2|cosine>=0.72|rerank>=0.68"
         ));
         trace.add(new AgentTraceStep(
                 "AnswerPolicyTool",
@@ -1125,9 +1217,9 @@ public class AgentService {
         return normalized.substring(0, maxLength - 1) + "…";
     }
 
-    private record Evidence(TranscriptSegment hit, int score, double vectorScore, int keywordScore) {
+    private record Evidence(TranscriptSegment hit, int score, double vectorScore, int keywordScore, double rerankScore) {
         static Evidence empty() {
-            return new Evidence(null, 0, 0, 0);
+            return new Evidence(null, 0, 0, 0, 0);
         }
     }
 
@@ -1159,7 +1251,8 @@ public class AgentService {
                     + "@" + evidence.hit().videoId()
                     + "/" + evidence.hit().startMs()
                     + ", keyword=" + evidence.keywordScore()
-                    + ", cosine=" + String.format(Locale.ROOT, "%.3f", evidence.vectorScore());
+                    + ", cosine=" + String.format(Locale.ROOT, "%.3f", evidence.vectorScore())
+                    + ", rerank=" + String.format(Locale.ROOT, "%.3f", evidence.rerankScore());
         }
     }
 

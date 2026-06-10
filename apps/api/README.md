@@ -16,6 +16,14 @@ http://localhost:8080
 
 The dev profile uses an in-memory H2 database with MySQL-compatible mode. Redis and MySQL dependencies are present for the later production profile, but the MVP can run without local Docker.
 
+For the normal OmniVid workbench flow, prefer the Docker-backed launcher from the repository root:
+
+```powershell
+.\scripts\start-api-docker.ps1
+```
+
+This starts Docker MySQL, Redis and Qdrant, then runs the API with the `docker` profile so the video library uses persistent MySQL data instead of the H2 in-memory database.
+
 For real file upload with audio extraction, point the API to the project-local FFmpeg binary:
 
 ```powershell

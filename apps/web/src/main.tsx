@@ -161,6 +161,25 @@ type AgentContext = {
   memorySource: string;
 };
 
+type KnowledgeBase = {
+  id: number;
+  name: string;
+  description: string;
+  videoCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type KnowledgeBaseDetail = {
+  knowledgeBase: KnowledgeBase;
+  videos: VideoAsset[];
+};
+
+type KnowledgeBaseFormState = {
+  name: string;
+  description: string;
+};
+
 type LlmConfig = {
   enabled: boolean;
   configured: boolean;
@@ -202,6 +221,39 @@ type LlmTestResponse = {
   totalTokens: number;
 };
 
+type EmbeddingMode = "qwen" | "openai" | "bge";
+
+type EmbeddingFormState = {
+  providerName: string;
+  mode: EmbeddingMode;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  timeoutSeconds: number;
+};
+
+type EmbeddingProvider = {
+  id: number;
+  providerName: string;
+  mode: EmbeddingMode;
+  baseUrl: string;
+  model: string;
+  apiKeyMasked: string;
+  timeoutSeconds: number;
+  enabled: boolean;
+  active: boolean;
+  lastTestStatus?: string;
+  lastTestMessage?: string;
+};
+
+type EmbeddingTestResponse = {
+  success: boolean;
+  message: string;
+  provider: string;
+  model: string;
+  dimensions: number;
+};
+
 type RuntimeStatus = {
   profile: string;
   database: {
@@ -230,6 +282,8 @@ type RuntimeStatus = {
     vectorStoreMode: string;
     vectorStoreConnected: boolean;
     vectorStoreEndpoint: string;
+    rerankProvider: string;
+    rerankDiagnostic: string;
   };
 };
 
@@ -313,6 +367,12 @@ type AsrDiagnostic = {
   videoStatus: string;
   asrPath: string;
   modelPath: string;
+  audioFilter: string;
+  language: string;
+  beamSize: number;
+  bestOf: number;
+  maxLen: number;
+  promptPreview: string;
   modelExists: boolean;
   audioExists: boolean;
   audioSizeBytes: number;
@@ -321,11 +381,72 @@ type AsrDiagnostic = {
   asrLogExists: boolean;
   asrLogSizeBytes: number;
   transcriptCount: number;
+  quality?: AsrTextQuality;
   lastJobStep: string;
   lastJobStatus: string;
   lastJobError?: string | null;
   ffmpegLogTail: string;
   asrLogTail: string;
+};
+
+type AsrTextQuality = {
+  garbledRisk: boolean;
+  replacementCount: number;
+  controlCount: number;
+  suspiciousLatinCount: number;
+  traditionalCount: number;
+  cjkCount: number;
+  sample: string;
+};
+
+type OcrSubtitleSample = {
+  segmentIndex: number;
+  startMs: number;
+  endMs: number;
+  asrText: string;
+  ocrText: string;
+  fusedText: string;
+  confidence: number;
+  ocrAvailable: boolean;
+  replacementSuggested: boolean;
+  cer: number;
+  similarity: number;
+};
+
+type OcrSubtitleQuality = {
+  videoId: number;
+  mode: string;
+  ocrAvailable: boolean;
+  message: string;
+  sampledCount: number;
+  ocrHitCount: number;
+  replacementCount: number;
+  appliedReplacementCount: number;
+  averageCer: number;
+  averageSimilarity: number;
+  averageFusedCer: number;
+  averageFusedSimilarity: number;
+  samples: OcrSubtitleSample[];
+};
+
+type TranscriptRepairResponse = {
+  videoId: number;
+  scanned: number;
+  repaired: number;
+  vectorReindexed: boolean;
+  message: string;
+};
+
+type TermGlossaryEntry = {
+  id: number;
+  sourcePattern: string;
+  replacement: string;
+  enabled: boolean;
+};
+
+type TermGlossaryFormState = {
+  sourcePattern: string;
+  replacement: string;
 };
 
 type UrlImportOptions = {
@@ -548,11 +669,52 @@ async function askAgent(videoId: number, question: string) {
   });
 }
 
-async function askKnowledgeBase(question: string) {
-  return apiJsonRequest<AgentAskResponse>("/api/knowledge-bases/default/agent/ask", {
+async function askKnowledgeBase(question: string, knowledgeBaseId?: number | null) {
+  const path = knowledgeBaseId
+    ? `/api/knowledge-bases/${knowledgeBaseId}/agent/ask`
+    : "/api/knowledge-bases/default/agent/ask";
+  return apiJsonRequest<AgentAskResponse>(path, {
     method: "POST",
     body: JSON.stringify({ question }),
   });
+}
+
+async function listKnowledgeBases() {
+  return apiJsonRequest<KnowledgeBase[]>("/api/knowledge-bases");
+}
+
+async function createKnowledgeBase(form: KnowledgeBaseFormState) {
+  return apiJsonRequest<KnowledgeBase>("/api/knowledge-bases", {
+    method: "POST",
+    body: JSON.stringify(form),
+  });
+}
+
+async function getKnowledgeBase(knowledgeBaseId: number) {
+  return apiJsonRequest<KnowledgeBaseDetail>(`/api/knowledge-bases/${knowledgeBaseId}`);
+}
+
+async function addKnowledgeBaseVideo(knowledgeBaseId: number, videoId: number) {
+  return apiJsonRequest<KnowledgeBaseDetail>(`/api/knowledge-bases/${knowledgeBaseId}/videos`, {
+    method: "POST",
+    body: JSON.stringify({ videoId }),
+  });
+}
+
+async function removeKnowledgeBaseVideo(knowledgeBaseId: number, videoId: number) {
+  return apiJsonRequest<KnowledgeBaseDetail>(`/api/knowledge-bases/${knowledgeBaseId}/videos/${videoId}`, {
+    method: "DELETE",
+  });
+}
+
+async function deleteKnowledgeBase(knowledgeBaseId: number) {
+  const response = await fetch(`${API_BASE}/api/knowledge-bases/${knowledgeBaseId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const message = await readApiError(response);
+    throw new Error(message || `Request failed: ${response.status}`);
+  }
 }
 
 async function getAgentMessages(videoId: number) {
@@ -596,6 +758,29 @@ async function testLlmConnection() {
   });
 }
 
+async function listEmbeddingProviders() {
+  return apiJsonRequest<EmbeddingProvider[]>("/api/embedding/providers");
+}
+
+async function saveEmbeddingProvider(config: EmbeddingFormState) {
+  return apiJsonRequest<EmbeddingProvider>("/api/embedding/providers", {
+    method: "POST",
+    body: JSON.stringify(config),
+  });
+}
+
+async function activateEmbeddingProvider(providerId: number) {
+  return apiJsonRequest<EmbeddingProvider>(`/api/embedding/providers/${providerId}/activate`, {
+    method: "POST",
+  });
+}
+
+async function testEmbeddingConnection() {
+  return apiJsonRequest<EmbeddingTestResponse>("/api/embedding/test", {
+    method: "POST",
+  });
+}
+
 async function getRuntimeStatus() {
   return apiJsonRequest<RuntimeStatus>("/api/runtime/status");
 }
@@ -618,6 +803,67 @@ async function getVectorIndexStatus() {
 
 async function getAsrDiagnostic(videoId: number) {
   return apiJsonRequest<AsrDiagnostic>(`/api/videos/${videoId}/asr/diagnostics`);
+}
+
+async function evaluateOcrQuality(videoId: number) {
+  return apiJsonRequest<OcrSubtitleQuality>(`/api/videos/${videoId}/asr/evaluate-ocr`);
+}
+
+async function fuseOcrQuality(videoId: number) {
+  return apiJsonRequest<OcrSubtitleQuality>(`/api/videos/${videoId}/asr/fuse-ocr`, {
+    method: "POST",
+  });
+}
+
+async function alignOcrQuality(videoId: number) {
+  return apiJsonRequest<OcrSubtitleQuality>(`/api/videos/${videoId}/asr/align-ocr`, {
+    method: "POST",
+  });
+}
+
+async function refineLowConfidenceSubtitles(videoId: number) {
+  return apiJsonRequest<OcrSubtitleQuality>(`/api/videos/${videoId}/asr/refine-low-confidence`, {
+    method: "POST",
+  });
+}
+
+async function repairTranscriptText(videoId: number) {
+  return apiJsonRequest<TranscriptRepairResponse>(`/api/videos/${videoId}/asr/repair-encoding`, {
+    method: "POST",
+  });
+}
+
+async function reprocessAsr(videoId: number) {
+  return apiJsonRequest<CompleteUploadResponse>(`/api/videos/${videoId}/asr/reprocess`, {
+    method: "POST",
+  });
+}
+
+async function listTermGlossary() {
+  return apiJsonRequest<TermGlossaryEntry[]>("/api/asr/glossary");
+}
+
+async function createTermGlossary(form: TermGlossaryFormState) {
+  return apiJsonRequest<TermGlossaryEntry>("/api/asr/glossary", {
+    method: "POST",
+    body: JSON.stringify(form),
+  });
+}
+
+async function setTermGlossaryEnabled(entryId: number, enabled: boolean) {
+  return apiJsonRequest<TermGlossaryEntry>(`/api/asr/glossary/${entryId}/enabled?enabled=${enabled}`, {
+    method: "PUT",
+  });
+}
+
+async function deleteTermGlossary(entryId: number) {
+  const response = await fetch(`${API_BASE}/api/asr/glossary/${entryId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const message = await readApiError(response);
+    throw new Error(message || `Request failed: ${response.status}`);
+  }
 }
 
 async function rebuildVectorIndex() {
@@ -648,6 +894,22 @@ function App() {
   const [threadPoolInspect, setThreadPoolInspect] = useState<ThreadPoolInspectResponse | null>(null);
   const [vectorIndexInspect, setVectorIndexInspect] = useState<VectorIndexStatusResponse | null>(null);
   const [asrDiagnostic, setAsrDiagnostic] = useState<AsrDiagnostic | null>(null);
+  const [ocrQuality, setOcrQuality] = useState<OcrSubtitleQuality | null>(null);
+  const [ocrStatus, setOcrStatus] = useState("");
+  const [isEvaluatingOcr, setIsEvaluatingOcr] = useState(false);
+  const [isFusingOcr, setIsFusingOcr] = useState(false);
+  const [isAligningOcr, setIsAligningOcr] = useState(false);
+  const [isRefiningLowConfidence, setIsRefiningLowConfidence] = useState(false);
+  const [textRepairStatus, setTextRepairStatus] = useState("");
+  const [isRepairingText, setIsRepairingText] = useState(false);
+  const [termGlossary, setTermGlossary] = useState<TermGlossaryEntry[]>([]);
+  const [termGlossaryForm, setTermGlossaryForm] = useState<TermGlossaryFormState>({
+    sourcePattern: "",
+    replacement: "",
+  });
+  const [termGlossaryStatus, setTermGlossaryStatus] = useState("");
+  const [isSavingTermGlossary, setIsSavingTermGlossary] = useState(false);
+  const [pendingTermGlossaryId, setPendingTermGlossaryId] = useState<number | null>(null);
   const [sseInspect, setSseInspect] = useState<SseInspectState>({
     status: "idle",
     url: "",
@@ -658,6 +920,16 @@ function App() {
   const [vectorIndexStatus, setVectorIndexStatus] = useState("");
   const [isRebuildingVectorIndex, setIsRebuildingVectorIndex] = useState(false);
   const [agentContext, setAgentContext] = useState<AgentContext | null>(null);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [activeKnowledgeBaseId, setActiveKnowledgeBaseId] = useState<number | null>(null);
+  const [activeKnowledgeBaseDetail, setActiveKnowledgeBaseDetail] = useState<KnowledgeBaseDetail | null>(null);
+  const [knowledgeBaseForm, setKnowledgeBaseForm] = useState<KnowledgeBaseFormState>({
+    name: "",
+    description: "",
+  });
+  const [knowledgeBaseStatus, setKnowledgeBaseStatus] = useState("");
+  const [isSavingKnowledgeBase, setIsSavingKnowledgeBase] = useState(false);
+  const [pendingKnowledgeBaseVideoId, setPendingKnowledgeBaseVideoId] = useState<number | null>(null);
   const [transcriptSearchQuery, setTranscriptSearchQuery] = useState("");
   const [transcriptSearchResults, setTranscriptSearchResults] = useState<ApiTranscriptSegment[]>([]);
   const [isSearchingTranscripts, setIsSearchingTranscripts] = useState(false);
@@ -675,9 +947,23 @@ function App() {
   const [isSavingLlm, setIsSavingLlm] = useState(false);
   const [isTestingLlm, setIsTestingLlm] = useState(false);
   const [activatingLlmId, setActivatingLlmId] = useState<number | null>(null);
+  const [embeddingProviders, setEmbeddingProviders] = useState<EmbeddingProvider[]>([]);
+  const [embeddingForm, setEmbeddingForm] = useState<EmbeddingFormState>({
+    providerName: embeddingDefaults.qwen.providerName,
+    mode: "qwen",
+    apiKey: "",
+    baseUrl: embeddingDefaults.qwen.baseUrl,
+    model: embeddingDefaults.qwen.model,
+    timeoutSeconds: 30,
+  });
+  const [embeddingStatus, setEmbeddingStatus] = useState("");
+  const [isSavingEmbedding, setIsSavingEmbedding] = useState(false);
+  const [isTestingEmbedding, setIsTestingEmbedding] = useState(false);
+  const [activatingEmbeddingId, setActivatingEmbeddingId] = useState<number | null>(null);
   const [diagnosticsTab, setDiagnosticsTab] = useState<DiagnosticsTab>("runtime");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [llmOpen, setLlmOpen] = useState(false);
+  const [embeddingOpen, setEmbeddingOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceState>({
@@ -701,6 +987,12 @@ function App() {
     setIsSearchingTranscripts(false);
   }
 
+  function resetOcrQuality() {
+    setOcrQuality(null);
+    setOcrStatus("");
+    setTextRepairStatus("");
+  }
+
   useEffect(() => {
     refreshVideos();
     refreshFailedJobs();
@@ -709,7 +1001,10 @@ function App() {
     refreshThreadPoolInspect();
     refreshVectorIndexInspect();
     refreshLlmConfig();
+    refreshEmbeddingProviders();
+    refreshKnowledgeBases();
     refreshRuntimeStatus();
+    refreshTermGlossary();
   }, []);
 
   useEffect(() => {
@@ -717,6 +1012,8 @@ function App() {
       refreshAsrDiagnostic(workspace.video.id);
     } else {
       setAsrDiagnostic(null);
+      setOcrQuality(null);
+      setOcrStatus("");
     }
   }, [workspace.video?.id, workspace.job?.status, workspace.transcripts.length]);
 
@@ -859,6 +1156,27 @@ function App() {
     }
   }
 
+  async function refreshEmbeddingProviders() {
+    try {
+      const providers = await listEmbeddingProviders();
+      setEmbeddingProviders(providers);
+      const activeProvider = providers.find((provider) => provider.active);
+      if (activeProvider) {
+        setEmbeddingForm((current) => ({
+          ...current,
+          providerName: activeProvider.providerName,
+          mode: activeProvider.mode,
+          apiKey: "",
+          baseUrl: activeProvider.baseUrl,
+          model: activeProvider.model,
+          timeoutSeconds: activeProvider.timeoutSeconds,
+        }));
+      }
+    } catch (exception) {
+      setEmbeddingStatus(exception instanceof Error ? exception.message : "Embedding 配置加载失败");
+    }
+  }
+
   async function refreshRuntimeStatus() {
     try {
       setRuntimeStatus(await getRuntimeStatus());
@@ -909,6 +1227,201 @@ function App() {
       setAsrDiagnostic(await getAsrDiagnostic(videoId));
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : "ASR diagnostics load failed");
+    }
+  }
+
+  async function refreshTermGlossary() {
+    try {
+      setTermGlossary(await listTermGlossary());
+    } catch (exception) {
+      setTermGlossaryStatus(exception instanceof Error ? exception.message : "Term glossary load failed");
+    }
+  }
+
+  async function refreshKnowledgeBases(nextActiveId = activeKnowledgeBaseId) {
+    try {
+      const bases = await listKnowledgeBases();
+      setKnowledgeBases(bases);
+      const resolvedId = nextActiveId ?? bases[0]?.id ?? null;
+      setActiveKnowledgeBaseId(resolvedId);
+      if (resolvedId) {
+        setActiveKnowledgeBaseDetail(await getKnowledgeBase(resolvedId));
+      } else {
+        setActiveKnowledgeBaseDetail(null);
+      }
+    } catch (exception) {
+      setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库加载失败");
+    }
+  }
+
+  async function handleEvaluateOcr() {
+    if (!workspace.video) return;
+    setIsEvaluatingOcr(true);
+    setOcrStatus("");
+    try {
+      const result = await evaluateOcrQuality(workspace.video.id);
+      setOcrQuality(result);
+      setOcrStatus(
+        `OCR 命中 ${result.ocrHitCount}/${result.sampledCount}，当前相似度 ${formatPercent(result.averageSimilarity)}，融合后 ${formatPercent(result.averageFusedSimilarity)}`,
+      );
+    } catch (exception) {
+      setOcrStatus(exception instanceof Error ? exception.message : "OCR quality evaluation failed");
+    } finally {
+      setIsEvaluatingOcr(false);
+    }
+  }
+
+  async function handleFuseOcr() {
+    if (!workspace.video) return;
+    setIsFusingOcr(true);
+    setOcrStatus("");
+    try {
+      const result = await fuseOcrQuality(workspace.video.id);
+      const detail = await getVideoDetail(workspace.video.id);
+      setWorkspace((current) => ({
+        ...current,
+        video: detail.video,
+        job: detail.job,
+        transcripts: detail.transcripts,
+        summaries: detail.summaries,
+      }));
+      setOcrQuality(result);
+      setOcrStatus(
+        `已写回 ${result.appliedReplacementCount} 处修复，当前相似度 ${formatPercent(result.averageSimilarity)}，融合后 ${formatPercent(result.averageFusedSimilarity)}`,
+      );
+      resetTranscriptSearch();
+      await refreshAsrDiagnostic(detail.video.id);
+      await refreshVectorIndexInspect();
+    } catch (exception) {
+      setOcrStatus(exception instanceof Error ? exception.message : "OCR fusion failed");
+    } finally {
+      setIsFusingOcr(false);
+    }
+  }
+
+  async function handleAlignOcr() {
+    if (!workspace.video) return;
+    setIsAligningOcr(true);
+    setOcrStatus("");
+    try {
+      const result = await alignOcrQuality(workspace.video.id);
+      const detail = await getVideoDetail(workspace.video.id);
+      setWorkspace((current) => ({
+        ...current,
+        video: detail.video,
+        job: detail.job,
+        transcripts: detail.transcripts,
+        summaries: detail.summaries,
+      }));
+      setOcrQuality(result);
+      setOcrStatus(
+        `Strong OCR align applied=${result.appliedReplacementCount}, sampled=${result.sampledCount}, fused=${formatPercent(result.averageFusedSimilarity)}`,
+      );
+      resetTranscriptSearch();
+      await refreshAsrDiagnostic(detail.video.id);
+      await refreshVectorIndexInspect();
+    } catch (exception) {
+      setOcrStatus(exception instanceof Error ? exception.message : "Strong OCR align failed");
+    } finally {
+      setIsAligningOcr(false);
+    }
+  }
+
+  async function handleRefineLowConfidence() {
+    if (!workspace.video) return;
+    setIsRefiningLowConfidence(true);
+    setOcrStatus("");
+    try {
+      const result = await refineLowConfidenceSubtitles(workspace.video.id);
+      const detail = await getVideoDetail(workspace.video.id);
+      setWorkspace((current) => ({
+        ...current,
+        video: detail.video,
+        job: detail.job,
+        transcripts: detail.transcripts,
+        summaries: detail.summaries,
+      }));
+      setOcrQuality(result);
+      setOcrStatus(
+        `Low-confidence refine applied=${result.appliedReplacementCount}, sampled=${result.sampledCount}, fused=${formatPercent(result.averageFusedSimilarity)}`,
+      );
+      resetTranscriptSearch();
+      await refreshAsrDiagnostic(detail.video.id);
+      await refreshVectorIndexInspect();
+    } catch (exception) {
+      setOcrStatus(exception instanceof Error ? exception.message : "Low-confidence refine failed");
+    } finally {
+      setIsRefiningLowConfidence(false);
+    }
+  }
+
+  async function handleRepairTranscriptText() {
+    if (!workspace.video) return;
+    setIsRepairingText(true);
+    setTextRepairStatus("");
+    try {
+      const result = await repairTranscriptText(workspace.video.id);
+      const detail = await getVideoDetail(workspace.video.id);
+      setWorkspace((current) => ({
+        ...current,
+        video: detail.video,
+        job: detail.job,
+        transcripts: detail.transcripts,
+        summaries: detail.summaries,
+      }));
+      resetTranscriptSearch();
+      await refreshAsrDiagnostic(detail.video.id);
+      await refreshVectorIndexInspect();
+      setTextRepairStatus(
+        `${result.message} · scanned=${result.scanned}, repaired=${result.repaired}, vector=${result.vectorReindexed ? "reindexed" : "unchanged"}`,
+      );
+    } catch (exception) {
+      setTextRepairStatus(exception instanceof Error ? exception.message : "Transcript text repair failed");
+    } finally {
+      setIsRepairingText(false);
+    }
+  }
+
+  async function handleAddTermGlossary() {
+    setIsSavingTermGlossary(true);
+    setTermGlossaryStatus("");
+    try {
+      await createTermGlossary(termGlossaryForm);
+      setTermGlossaryForm({ sourcePattern: "", replacement: "" });
+      await refreshTermGlossary();
+      setTermGlossaryStatus("Term glossary saved");
+    } catch (exception) {
+      setTermGlossaryStatus(exception instanceof Error ? exception.message : "Term glossary save failed");
+    } finally {
+      setIsSavingTermGlossary(false);
+    }
+  }
+
+  async function handleToggleTermGlossary(entry: TermGlossaryEntry) {
+    setPendingTermGlossaryId(entry.id);
+    setTermGlossaryStatus("");
+    try {
+      await setTermGlossaryEnabled(entry.id, !entry.enabled);
+      await refreshTermGlossary();
+      setTermGlossaryStatus(entry.enabled ? "Term glossary disabled" : "Term glossary enabled");
+    } catch (exception) {
+      setTermGlossaryStatus(exception instanceof Error ? exception.message : "Term glossary update failed");
+    } finally {
+      setPendingTermGlossaryId(null);
+    }
+  }
+
+  async function handleDeleteTermGlossary(entryId: number) {
+    setPendingTermGlossaryId(entryId);
+    setTermGlossaryStatus("");
+    try {
+      await deleteTermGlossary(entryId);
+      await refreshTermGlossary();
+      setTermGlossaryStatus("Term glossary deleted");
+    } catch (exception) {
+      setTermGlossaryStatus(exception instanceof Error ? exception.message : "Term glossary delete failed");
+    } finally {
+      setPendingTermGlossaryId(null);
     }
   }
 
@@ -988,6 +1501,139 @@ function App() {
       setLlmStatus(exception instanceof Error ? exception.message : "LLM Provider 启用失败");
     } finally {
       setActivatingLlmId(null);
+    }
+  }
+
+  function handleEmbeddingModeChange(mode: EmbeddingMode) {
+    const defaults = embeddingDefaults[mode];
+    setEmbeddingForm((current) => ({
+      ...current,
+      mode,
+      providerName: defaults.providerName,
+      baseUrl: defaults.baseUrl,
+      model: defaults.model,
+    }));
+  }
+
+  async function handleSaveEmbeddingProvider() {
+    setIsSavingEmbedding(true);
+    setEmbeddingStatus("");
+    try {
+      await saveEmbeddingProvider({
+        ...embeddingForm,
+        timeoutSeconds: Number(embeddingForm.timeoutSeconds) || 30,
+      });
+      await refreshEmbeddingProviders();
+      await refreshRuntimeStatus();
+      await refreshVectorIndexInspect();
+      setEmbeddingStatus("Embedding Provider 已保存并启用，建议重建向量索引");
+    } catch (exception) {
+      setEmbeddingStatus(exception instanceof Error ? exception.message : "Embedding 配置保存失败");
+    } finally {
+      setIsSavingEmbedding(false);
+    }
+  }
+
+  async function handleTestEmbeddingConnection() {
+    setIsTestingEmbedding(true);
+    setEmbeddingStatus("");
+    try {
+      const result = await testEmbeddingConnection();
+      setEmbeddingStatus(
+        `${result.success ? "连接成功" : "连接失败"}：${result.message} · ${result.dimensions} dims`,
+      );
+      await refreshEmbeddingProviders();
+      await refreshRuntimeStatus();
+    } catch (exception) {
+      setEmbeddingStatus(exception instanceof Error ? exception.message : "Embedding 连接测试失败");
+    } finally {
+      setIsTestingEmbedding(false);
+    }
+  }
+
+  async function handleActivateEmbeddingProvider(providerId: number) {
+    setActivatingEmbeddingId(providerId);
+    setEmbeddingStatus("");
+    try {
+      await activateEmbeddingProvider(providerId);
+      await refreshEmbeddingProviders();
+      await refreshRuntimeStatus();
+      await refreshVectorIndexInspect();
+      setEmbeddingStatus("Embedding Provider 已启用，建议重建向量索引");
+    } catch (exception) {
+      setEmbeddingStatus(exception instanceof Error ? exception.message : "Embedding Provider 启用失败");
+    } finally {
+      setActivatingEmbeddingId(null);
+    }
+  }
+
+  async function handleCreateKnowledgeBase() {
+    setIsSavingKnowledgeBase(true);
+    setKnowledgeBaseStatus("");
+    try {
+      const created = await createKnowledgeBase(knowledgeBaseForm);
+      setKnowledgeBaseForm({ name: "", description: "" });
+      setAgentMode("knowledgeBase");
+      await refreshKnowledgeBases(created.id);
+      setKnowledgeBaseStatus(`已创建知识库：${created.name}`);
+    } catch (exception) {
+      setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库创建失败");
+    } finally {
+      setIsSavingKnowledgeBase(false);
+    }
+  }
+
+  async function handleSelectKnowledgeBase(knowledgeBaseId: number) {
+    setActiveKnowledgeBaseId(knowledgeBaseId);
+    setKnowledgeBaseStatus("");
+    try {
+      setActiveKnowledgeBaseDetail(await getKnowledgeBase(knowledgeBaseId));
+    } catch (exception) {
+      setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库详情加载失败");
+    }
+  }
+
+  async function handleAddVideoToKnowledgeBase(videoId: number) {
+    if (!activeKnowledgeBaseId) return;
+    setPendingKnowledgeBaseVideoId(videoId);
+    setKnowledgeBaseStatus("");
+    try {
+      setActiveKnowledgeBaseDetail(await addKnowledgeBaseVideo(activeKnowledgeBaseId, videoId));
+      await refreshKnowledgeBases(activeKnowledgeBaseId);
+      setKnowledgeBaseStatus("视频已加入知识库");
+    } catch (exception) {
+      setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "加入知识库失败");
+    } finally {
+      setPendingKnowledgeBaseVideoId(null);
+    }
+  }
+
+  async function handleRemoveVideoFromKnowledgeBase(videoId: number) {
+    if (!activeKnowledgeBaseId) return;
+    setPendingKnowledgeBaseVideoId(videoId);
+    setKnowledgeBaseStatus("");
+    try {
+      setActiveKnowledgeBaseDetail(await removeKnowledgeBaseVideo(activeKnowledgeBaseId, videoId));
+      await refreshKnowledgeBases(activeKnowledgeBaseId);
+      setKnowledgeBaseStatus("视频已移出知识库");
+    } catch (exception) {
+      setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "移出知识库失败");
+    } finally {
+      setPendingKnowledgeBaseVideoId(null);
+    }
+  }
+
+  async function handleDeleteKnowledgeBase() {
+    if (!activeKnowledgeBaseId) return;
+    setKnowledgeBaseStatus("");
+    try {
+      await deleteKnowledgeBase(activeKnowledgeBaseId);
+      setActiveKnowledgeBaseId(null);
+      setActiveKnowledgeBaseDetail(null);
+      await refreshKnowledgeBases(null);
+      setKnowledgeBaseStatus("知识库已删除");
+    } catch (exception) {
+      setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库删除失败");
     }
   }
 
@@ -1127,6 +1773,27 @@ function App() {
     }
   }
 
+  async function handleReprocessAsr() {
+    if (!workspace.video) return;
+    setIsLoading(true);
+    setError("");
+    resetOcrQuality();
+
+    try {
+      const upload = await reprocessAsr(workspace.video.id);
+      await applyUploadResult(
+        upload,
+        `已重新识别 ${upload.video.originalName} 的字幕，新的 ASR 热词提示会用于本次转写。`,
+      );
+      setDiagnosticsTab("recovery");
+      await refreshThreadPoolInspect();
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : "重新识别字幕失败");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   async function handleRetryFailedJob(videoId: number) {
     setIsLoading(true);
     setError("");
@@ -1155,7 +1822,7 @@ function App() {
 
     try {
       const answer = agentMode === "knowledgeBase"
-        ? await askKnowledgeBase(trimmedQuery)
+        ? await askKnowledgeBase(trimmedQuery, activeKnowledgeBaseId)
         : await askAgent(workspace.video!.id, trimmedQuery);
       let citedTranscripts = workspace.transcripts;
       if (agentMode === "knowledgeBase" && answer.videoId > 0 && answer.videoId !== workspace.video?.id) {
@@ -1305,89 +1972,7 @@ function App() {
 
   return (
     <main className="app-shell">
-      <Header
-        diagnosticsOpen={diagnosticsOpen}
-        libraryOpen={libraryOpen}
-        llmConfig={llmConfig}
-        llmOpen={llmOpen}
-        onDiagnosticsToggle={() => {
-          setDiagnosticsOpen((current) => !current);
-          setLlmOpen(false);
-          setLibraryOpen(false);
-        }}
-        onLibraryToggle={() => {
-          setLibraryOpen((current) => !current);
-          setLlmOpen(false);
-          setDiagnosticsOpen(false);
-        }}
-        onLlmToggle={() => {
-          setLlmOpen((current) => !current);
-          setDiagnosticsOpen(false);
-          setLibraryOpen(false);
-        }}
-        videosCount={videos.length}
-      />
-      {libraryOpen && (
-        <VideoLibraryPanel
-          activeVideoId={workspace.video?.id ?? null}
-          onClose={() => setLibraryOpen(false)}
-          onSelect={(videoId) => {
-            setLibraryOpen(false);
-            loadVideo(videoId);
-          }}
-          videos={videos}
-          variant="popover"
-        />
-      )}
-      {llmOpen && (
-        <LlmConfigPanel
-          activatingProviderId={activatingLlmId}
-          config={llmConfig}
-          form={llmForm}
-          isSaving={isSavingLlm}
-          isTesting={isTestingLlm}
-          onActivateProvider={handleActivateLlmProvider}
-          onChange={setLlmForm}
-          onClose={() => setLlmOpen(false)}
-          onSave={handleSaveLlmConfig}
-          onTest={handleTestLlmConnection}
-          providers={llmProviders}
-          status={llmStatus}
-        />
-      )}
-      {diagnosticsOpen && (
-        <DiagnosticsPanel
-          activeTab={diagnosticsTab}
-          agentContext={agentContext}
-          asrDiagnostic={asrDiagnostic}
-          failedJobs={failedJobs}
-          isLoading={isLoading}
-          isRebuildingVectorIndex={isRebuildingVectorIndex}
-          job={workspace.job}
-          latestAgentMessage={latestAgentMessage}
-          mysqlExplain={mysqlExplain}
-          onClose={() => setDiagnosticsOpen(false)}
-          onRebuildVectorIndex={handleRebuildVectorIndex}
-          onRefreshAsr={() => refreshAsrDiagnostic()}
-          onRefreshFailedJobs={refreshFailedJobs}
-          onRefreshMysql={refreshMysqlExplain}
-          onRefreshRedis={refreshRedisInspect}
-          onRefreshThreadPool={refreshThreadPoolInspect}
-          onRefreshVectorStore={refreshVectorIndexInspect}
-          onRetryFailedJob={handleRetryFailedJob}
-          onSelectFailedVideo={loadVideo}
-          onTabChange={setDiagnosticsTab}
-          rebuildStatus={vectorIndexStatus}
-          redisInspect={redisInspect}
-          runtimeStatus={runtimeStatus}
-          sseInspect={sseInspect}
-          summaries={workspace.summaries}
-          threadPoolInspect={threadPoolInspect}
-          transcripts={workspace.transcripts}
-          vectorIndexInspect={vectorIndexInspect}
-          video={workspace.video}
-        />
-      )}
+      <Header />
       <section className="workspace-grid">
         <aside className="left-rail" aria-label="上传与任务">
           <UploadPanel
@@ -1431,27 +2016,174 @@ function App() {
         </section>
 
         <aside className="right-rail" aria-label="总结与问答">
-          <RightWorkspacePanel
-            activeTab={rightWorkspaceTab}
-            agent={
-              <AgentPanel
-                disabled={agentMode === "video" && !workspace.video}
-                mode={agentMode}
-                messages={messages}
-                onClear={handleClearAgentMessages}
-                onCitationSelect={handleSelectCitation}
-                query={query}
-                context={agentContext}
-                video={workspace.video}
-                onAsk={handleAskAgent}
-                onModeChange={setAgentMode}
-                onQueryChange={setQuery}
-              />
-            }
-            onTabChange={setRightWorkspaceTab}
-            summariesCount={workspace.summaries.length}
-            summary={<SummaryPanel summaries={workspace.summaries} />}
+          <HeaderActions
+            diagnosticsOpen={diagnosticsOpen}
+            embeddingOpen={embeddingOpen}
+            embeddingProvider={runtimeStatus?.llm.embeddingProvider}
+            libraryOpen={libraryOpen}
+            llmConfig={llmConfig}
+            llmOpen={llmOpen}
+            onDiagnosticsToggle={() => {
+              setDiagnosticsOpen((current) => !current);
+              setLlmOpen(false);
+              setEmbeddingOpen(false);
+              setLibraryOpen(false);
+            }}
+            onEmbeddingToggle={() => {
+              setEmbeddingOpen((current) => !current);
+              setLlmOpen(false);
+              setDiagnosticsOpen(false);
+              setLibraryOpen(false);
+            }}
+            onLibraryToggle={() => {
+              setLibraryOpen((current) => !current);
+              setLlmOpen(false);
+              setEmbeddingOpen(false);
+              setDiagnosticsOpen(false);
+            }}
+            onLlmToggle={() => {
+              setLlmOpen((current) => !current);
+              setDiagnosticsOpen(false);
+              setEmbeddingOpen(false);
+              setLibraryOpen(false);
+            }}
+            videosCount={videos.length}
           />
+          {llmOpen ? (
+            <LlmConfigPanel
+              activatingProviderId={activatingLlmId}
+              config={llmConfig}
+              form={llmForm}
+              isSaving={isSavingLlm}
+              isTesting={isTestingLlm}
+              onActivateProvider={handleActivateLlmProvider}
+              onChange={setLlmForm}
+              onClose={() => setLlmOpen(false)}
+              onSave={handleSaveLlmConfig}
+              onTest={handleTestLlmConnection}
+              providers={llmProviders}
+              status={llmStatus}
+            />
+          ) : embeddingOpen ? (
+            <EmbeddingConfigPanel
+              activatingProviderId={activatingEmbeddingId}
+              form={embeddingForm}
+              isSaving={isSavingEmbedding}
+              isTesting={isTestingEmbedding}
+              onActivateProvider={handleActivateEmbeddingProvider}
+              onChange={setEmbeddingForm}
+              onClose={() => setEmbeddingOpen(false)}
+              onModeChange={handleEmbeddingModeChange}
+              onSave={handleSaveEmbeddingProvider}
+              onTest={handleTestEmbeddingConnection}
+              providers={embeddingProviders}
+              runtimeStatus={runtimeStatus}
+              status={embeddingStatus}
+            />
+          ) : diagnosticsOpen ? (
+            <DiagnosticsPanel
+              activeTab={diagnosticsTab}
+              agentContext={agentContext}
+              asrDiagnostic={asrDiagnostic}
+              failedJobs={failedJobs}
+              isLoading={isLoading}
+              isEvaluatingOcr={isEvaluatingOcr}
+              isFusingOcr={isFusingOcr}
+              isAligningOcr={isAligningOcr}
+              isRefiningLowConfidence={isRefiningLowConfidence}
+              isRepairingText={isRepairingText}
+              isSavingTermGlossary={isSavingTermGlossary}
+              isRebuildingVectorIndex={isRebuildingVectorIndex}
+              job={workspace.job}
+              latestAgentMessage={latestAgentMessage}
+              mysqlExplain={mysqlExplain}
+              onClose={() => setDiagnosticsOpen(false)}
+              onAddTermGlossary={handleAddTermGlossary}
+              onAlignOcr={handleAlignOcr}
+              onDeleteTermGlossary={handleDeleteTermGlossary}
+              onEvaluateOcr={handleEvaluateOcr}
+              onFuseOcr={handleFuseOcr}
+              onRepairTranscriptText={handleRepairTranscriptText}
+              onRebuildVectorIndex={handleRebuildVectorIndex}
+              onRefreshAsr={() => refreshAsrDiagnostic()}
+              onRefreshFailedJobs={refreshFailedJobs}
+              onRefreshMysql={refreshMysqlExplain}
+              onRefreshRedis={refreshRedisInspect}
+              onRefreshTermGlossary={refreshTermGlossary}
+              onRefreshThreadPool={refreshThreadPoolInspect}
+              onRefreshVectorStore={refreshVectorIndexInspect}
+              onRefineLowConfidence={handleRefineLowConfidence}
+              onReprocessAsr={handleReprocessAsr}
+              onRetryFailedJob={handleRetryFailedJob}
+              onSelectFailedVideo={loadVideo}
+              onTabChange={setDiagnosticsTab}
+              onTermGlossaryFormChange={setTermGlossaryForm}
+              onToggleTermGlossary={handleToggleTermGlossary}
+              ocrQuality={ocrQuality}
+              ocrStatus={ocrStatus}
+              pendingTermGlossaryId={pendingTermGlossaryId}
+              rebuildStatus={vectorIndexStatus}
+              redisInspect={redisInspect}
+              runtimeStatus={runtimeStatus}
+              sseInspect={sseInspect}
+              termGlossary={termGlossary}
+              termGlossaryForm={termGlossaryForm}
+              termGlossaryStatus={termGlossaryStatus}
+              textRepairStatus={textRepairStatus}
+              summaries={workspace.summaries}
+              threadPoolInspect={threadPoolInspect}
+              transcripts={workspace.transcripts}
+              vectorIndexInspect={vectorIndexInspect}
+              video={workspace.video}
+            />
+          ) : libraryOpen ? (
+            <VideoLibraryPanel
+              activeVideoId={workspace.video?.id ?? null}
+              onClose={() => setLibraryOpen(false)}
+              onSelect={(videoId) => {
+                setLibraryOpen(false);
+                loadVideo(videoId);
+              }}
+              videos={videos}
+              variant="popover"
+            />
+          ) : (
+            <RightWorkspacePanel
+              activeTab={rightWorkspaceTab}
+              agent={
+                <AgentPanel
+                  activeKnowledgeBaseDetail={activeKnowledgeBaseDetail}
+                  activeKnowledgeBaseId={activeKnowledgeBaseId}
+                  context={agentContext}
+                  disabled={agentMode === "video" && !workspace.video}
+                  isSavingKnowledgeBase={isSavingKnowledgeBase}
+                  knowledgeBaseForm={knowledgeBaseForm}
+                  knowledgeBases={knowledgeBases}
+                  knowledgeBaseStatus={knowledgeBaseStatus}
+                  messages={messages}
+                  mode={agentMode}
+                  onAddVideoToKnowledgeBase={handleAddVideoToKnowledgeBase}
+                  onAsk={handleAskAgent}
+                  onClear={handleClearAgentMessages}
+                  onCitationSelect={handleSelectCitation}
+                  onCreateKnowledgeBase={handleCreateKnowledgeBase}
+                  onDeleteKnowledgeBase={handleDeleteKnowledgeBase}
+                  onKnowledgeBaseFormChange={setKnowledgeBaseForm}
+                  onModeChange={setAgentMode}
+                  onQueryChange={setQuery}
+                  onRemoveVideoFromKnowledgeBase={handleRemoveVideoFromKnowledgeBase}
+                  onSelectKnowledgeBase={handleSelectKnowledgeBase}
+                  pendingKnowledgeBaseVideoId={pendingKnowledgeBaseVideoId}
+                  query={query}
+                  video={workspace.video}
+                  videos={videos}
+                />
+              }
+              onTabChange={setRightWorkspaceTab}
+              summariesCount={workspace.summaries.length}
+              summary={<SummaryPanel summaries={workspace.summaries} />}
+            />
+          )}
         </aside>
       </section>
     </main>
@@ -1463,26 +2195,50 @@ function DiagnosticsPanel({
   agentContext,
   asrDiagnostic,
   failedJobs,
+  isAligningOcr,
+  isEvaluatingOcr,
+  isFusingOcr,
+  isRefiningLowConfidence,
+  isRepairingText,
   isLoading,
+  isSavingTermGlossary,
   isRebuildingVectorIndex,
   job,
   latestAgentMessage,
   mysqlExplain,
+  onAddTermGlossary,
+  onAlignOcr,
+  onDeleteTermGlossary,
+  onEvaluateOcr,
+  onFuseOcr,
+  onRepairTranscriptText,
   onRebuildVectorIndex,
   onClose,
   onRefreshAsr,
   onRefreshFailedJobs,
   onRefreshMysql,
   onRefreshRedis,
+  onRefreshTermGlossary,
   onRefreshThreadPool,
   onRefreshVectorStore,
+  onRefineLowConfidence,
+  onReprocessAsr,
   onRetryFailedJob,
   onSelectFailedVideo,
   onTabChange,
+  onTermGlossaryFormChange,
+  onToggleTermGlossary,
+  ocrQuality,
+  ocrStatus,
+  pendingTermGlossaryId,
   rebuildStatus,
   redisInspect,
   runtimeStatus,
   sseInspect,
+  termGlossary,
+  termGlossaryForm,
+  termGlossaryStatus,
+  textRepairStatus,
   summaries,
   threadPoolInspect,
   transcripts,
@@ -1493,26 +2249,50 @@ function DiagnosticsPanel({
   agentContext: AgentContext | null;
   asrDiagnostic: AsrDiagnostic | null;
   failedJobs: FailedJob[];
+  isAligningOcr: boolean;
+  isEvaluatingOcr: boolean;
+  isFusingOcr: boolean;
+  isRefiningLowConfidence: boolean;
+  isRepairingText: boolean;
   isLoading: boolean;
+  isSavingTermGlossary: boolean;
   isRebuildingVectorIndex: boolean;
   job: ProcessingJob | null;
   latestAgentMessage: ChatMessage | undefined;
   mysqlExplain: MysqlExplainPlan[];
+  onAddTermGlossary: () => void;
+  onAlignOcr: () => void;
+  onDeleteTermGlossary: (entryId: number) => void;
+  onEvaluateOcr: () => void;
+  onFuseOcr: () => void;
+  onRepairTranscriptText: () => void;
   onRebuildVectorIndex: () => void;
   onClose: () => void;
   onRefreshAsr: () => void;
   onRefreshFailedJobs: () => void;
   onRefreshMysql: () => void;
   onRefreshRedis: () => void;
+  onRefreshTermGlossary: () => void;
   onRefreshThreadPool: () => void;
   onRefreshVectorStore: () => void;
+  onRefineLowConfidence: () => void;
+  onReprocessAsr: () => void;
   onRetryFailedJob: (videoId: number) => void;
   onSelectFailedVideo: (videoId: number) => void;
   onTabChange: (tab: DiagnosticsTab) => void;
+  onTermGlossaryFormChange: (form: TermGlossaryFormState) => void;
+  onToggleTermGlossary: (entry: TermGlossaryEntry) => void;
+  ocrQuality: OcrSubtitleQuality | null;
+  ocrStatus: string;
+  pendingTermGlossaryId: number | null;
   rebuildStatus: string;
   redisInspect: RedisInspectResponse | null;
   runtimeStatus: RuntimeStatus | null;
   sseInspect: SseInspectState;
+  termGlossary: TermGlossaryEntry[];
+  termGlossaryForm: TermGlossaryFormState;
+  termGlossaryStatus: string;
+  textRepairStatus: string;
   summaries: SummaryAsset[];
   threadPoolInspect: ThreadPoolInspectResponse | null;
   transcripts: ApiTranscriptSegment[];
@@ -1618,7 +2398,34 @@ function DiagnosticsPanel({
           <>
             <AsrDiagnosticPanel
               diagnostic={asrDiagnostic}
+              isAligningOcr={isAligningOcr}
+              isEvaluatingOcr={isEvaluatingOcr}
+              isFusingOcr={isFusingOcr}
+              isRefiningLowConfidence={isRefiningLowConfidence}
+              isRepairingText={isRepairingText}
+              ocrQuality={ocrQuality}
+              ocrStatus={ocrStatus}
+              onAlignOcr={onAlignOcr}
+              onEvaluateOcr={onEvaluateOcr}
+              onFuseOcr={onFuseOcr}
+              onRefineLowConfidence={onRefineLowConfidence}
+              onRepairText={onRepairTranscriptText}
               onRefresh={onRefreshAsr}
+              onReprocess={onReprocessAsr}
+              textRepairStatus={textRepairStatus}
+              video={video}
+            />
+            <TermGlossaryPanel
+              entries={termGlossary}
+              form={termGlossaryForm}
+              isSaving={isSavingTermGlossary}
+              onAdd={onAddTermGlossary}
+              onChange={onTermGlossaryFormChange}
+              onDelete={onDeleteTermGlossary}
+              onRefresh={onRefreshTermGlossary}
+              onToggle={onToggleTermGlossary}
+              pendingEntryId={pendingTermGlossaryId}
+              status={termGlossaryStatus}
             />
             <RecoveryPanel
               failedJobs={failedJobs}
@@ -1717,6 +2524,11 @@ function formatDuration(ms: number) {
   return hours ? `${hours}:${minutes}:${seconds}` : `${minutes}:${seconds}`;
 }
 
+function formatPercent(value: number) {
+  if (!Number.isFinite(value)) return "0%";
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
 function buildHistoryCitation(
   videoId: number,
   citationText: string | undefined,
@@ -1779,10 +2591,10 @@ function parseSummary(summary: SummaryAsset | undefined) {
 }
 
 const summaryTemplates = [
-  { type: "CORE_POINTS", label: "核心观点" },
-  { type: "MEETING_MINUTES", label: "会议纪要" },
-  { type: "BLOG_OUTLINE", label: "博客大纲" },
-  { type: "PPT_OUTLINE", label: "PPT 大纲" },
+  { type: "CORE_POINTS", label: "核心观点", actionLabel: "生成核心观点总结" },
+  { type: "MEETING_MINUTES", label: "会议纪要", actionLabel: "生成会议总结" },
+  { type: "BLOG_OUTLINE", label: "博客大纲", actionLabel: "生成博客大纲" },
+  { type: "PPT_OUTLINE", label: "PPT 大纲", actionLabel: "生成 PPT 大纲" },
 ];
 
 const diagnosticTabs: { id: DiagnosticsTab; label: string; meta: string }[] = [
@@ -1792,27 +2604,25 @@ const diagnosticTabs: { id: DiagnosticsTab; label: string; meta: string }[] = [
   { id: "recovery", label: "Recovery", meta: "ASR / 补偿" },
 ];
 
-function Header({
-  diagnosticsOpen,
-  libraryOpen,
-  llmConfig,
-  llmOpen,
-  onDiagnosticsToggle,
-  onLibraryToggle,
-  onLlmToggle,
-  videosCount,
-}: {
-  diagnosticsOpen: boolean;
-  libraryOpen: boolean;
-  llmConfig: LlmConfig | null;
-  llmOpen: boolean;
-  onDiagnosticsToggle: () => void;
-  onLibraryToggle: () => void;
-  onLlmToggle: () => void;
-  videosCount: number;
-}) {
-  const llmReady = Boolean(llmConfig?.enabled && llmConfig.configured);
+const embeddingDefaults: Record<EmbeddingMode, Pick<EmbeddingFormState, "providerName" | "baseUrl" | "model">> = {
+  qwen: {
+    providerName: "Qwen Embedding",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "text-embedding-v4",
+  },
+  openai: {
+    providerName: "OpenAI Embedding",
+    baseUrl: "https://api.openai.com/v1",
+    model: "text-embedding-3-small",
+  },
+  bge: {
+    providerName: "BGE Embedding",
+    baseUrl: "http://localhost:8000/v1",
+    model: "BAAI/bge-m3",
+  },
+};
 
+function Header() {
   return (
     <header className="app-header">
       <div>
@@ -1822,24 +2632,91 @@ function Header({
         </div>
         <h1>OmniVid 工作台</h1>
       </div>
-      <div className="header-metrics" aria-label="系统指标">
-        <HeaderLibraryButton
-          active={libraryOpen}
-          count={videosCount}
-          onClick={onLibraryToggle}
-        />
-        <HeaderLlmButton
-          active={llmOpen}
-          ready={llmReady}
-          model={llmConfig?.model}
-          onClick={onLlmToggle}
-        />
-        <HeaderDiagnosticsButton
-          active={diagnosticsOpen}
-          onClick={onDiagnosticsToggle}
-        />
-      </div>
     </header>
+  );
+}
+
+function HeaderActions({
+  diagnosticsOpen,
+  embeddingOpen,
+  embeddingProvider,
+  libraryOpen,
+  llmConfig,
+  llmOpen,
+  onDiagnosticsToggle,
+  onEmbeddingToggle,
+  onLibraryToggle,
+  onLlmToggle,
+  videosCount,
+}: {
+  diagnosticsOpen: boolean;
+  embeddingOpen: boolean;
+  embeddingProvider?: string;
+  libraryOpen: boolean;
+  llmConfig: LlmConfig | null;
+  llmOpen: boolean;
+  onDiagnosticsToggle: () => void;
+  onEmbeddingToggle: () => void;
+  onLibraryToggle: () => void;
+  onLlmToggle: () => void;
+  videosCount: number;
+}) {
+  const llmReady = Boolean(llmConfig?.enabled && llmConfig.configured);
+  const embeddingReady = Boolean(embeddingProvider && !embeddingProvider.includes("local"));
+
+  return (
+    <div className="header-metrics" aria-label="绯荤粺鎸囨爣">
+      <HeaderLlmButton
+        active={llmOpen}
+        ready={llmReady}
+        model={llmConfig?.model}
+        onClick={onLlmToggle}
+      />
+      <HeaderEmbeddingButton
+        active={embeddingOpen}
+        provider={embeddingProvider}
+        ready={embeddingReady}
+        onClick={onEmbeddingToggle}
+      />
+      <HeaderDiagnosticsButton
+        active={diagnosticsOpen}
+        onClick={onDiagnosticsToggle}
+      />
+      <HeaderLibraryButton
+        active={libraryOpen}
+        count={videosCount}
+        onClick={onLibraryToggle}
+      />
+    </div>
+  );
+}
+
+function HeaderEmbeddingButton({
+  active,
+  onClick,
+  provider,
+  ready,
+}: {
+  active: boolean;
+  onClick: () => void;
+  provider?: string;
+  ready: boolean;
+}) {
+  return (
+    <button
+      aria-expanded={active}
+      className={`metric top-popover-trigger llm-trigger ${active ? "active" : ""} ${ready ? "ready" : ""}`}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="metric-icon">
+        <Fingerprint size={17} />
+      </span>
+      <span>
+        <strong>Embedding</strong>
+        <small>{ready ? provider ?? "已接通" : "配置向量模型"}</small>
+      </span>
+    </button>
   );
 }
 
@@ -2292,6 +3169,174 @@ function LlmConfigPanel({
   );
 }
 
+function EmbeddingConfigPanel({
+  activatingProviderId,
+  form,
+  isSaving,
+  isTesting,
+  onActivateProvider,
+  onChange,
+  onClose,
+  onModeChange,
+  onSave,
+  onTest,
+  providers,
+  runtimeStatus,
+  status,
+}: {
+  activatingProviderId: number | null;
+  form: EmbeddingFormState;
+  isSaving: boolean;
+  isTesting: boolean;
+  onActivateProvider: (providerId: number) => void;
+  onChange: (next: EmbeddingFormState) => void;
+  onClose: () => void;
+  onModeChange: (mode: EmbeddingMode) => void;
+  onSave: () => void;
+  onTest: () => void;
+  providers: EmbeddingProvider[];
+  runtimeStatus: RuntimeStatus | null;
+  status: string;
+}) {
+  const activeProvider = providers.find((provider) => provider.active);
+  const ready = Boolean(runtimeStatus?.llm.embeddingProvider && !runtimeStatus.llm.embeddingProvider.includes("local"));
+  const canTest = Boolean(activeProvider);
+  const stateLabel = ready
+    ? runtimeStatus?.llm.embeddingProvider ?? "已接通"
+    : activeProvider
+      ? "待测试"
+      : "未配置";
+
+  return (
+    <section className="panel llm-panel">
+      <div className="panel-title">
+        <Fingerprint size={19} />
+        <h2>Embedding</h2>
+        <span className={`panel-count ${ready ? "ready" : ""}`}>{stateLabel}</span>
+        <button className="llm-close" onClick={onClose} type="button">
+          关闭
+        </button>
+      </div>
+      <div className="llm-switch-row embedding-mode-row">
+        {(["qwen", "openai", "bge"] as EmbeddingMode[]).map((mode) => (
+          <button
+            className={form.mode === mode ? "active" : ""}
+            key={mode}
+            onClick={() => onModeChange(mode)}
+            type="button"
+          >
+            {mode.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <div className="llm-fields">
+        <label>
+          <span>名称</span>
+          <input
+            onChange={(event) => onChange({ ...form, providerName: event.currentTarget.value })}
+            placeholder={embeddingDefaults[form.mode].providerName}
+            value={form.providerName}
+          />
+        </label>
+        <label>
+          <span>Base URL</span>
+          <input
+            onChange={(event) => onChange({ ...form, baseUrl: event.currentTarget.value })}
+            placeholder={embeddingDefaults[form.mode].baseUrl}
+            value={form.baseUrl}
+          />
+        </label>
+        <label>
+          <span>模型</span>
+          <input
+            onChange={(event) => onChange({ ...form, model: event.currentTarget.value })}
+            placeholder={embeddingDefaults[form.mode].model}
+            value={form.model}
+          />
+        </label>
+        <label>
+          <span>API Key</span>
+          <input
+            autoComplete="off"
+            onChange={(event) => onChange({ ...form, apiKey: event.currentTarget.value })}
+            placeholder={form.mode === "bge" ? "本地 BGE 可留空" : "sk-..."}
+            type="password"
+            value={form.apiKey}
+          />
+        </label>
+        <label>
+          <span>超时</span>
+          <input
+            min={5}
+            max={120}
+            onChange={(event) => onChange({ ...form, timeoutSeconds: Number(event.currentTarget.value) })}
+            type="number"
+            value={form.timeoutSeconds}
+          />
+        </label>
+      </div>
+      <div className="llm-actions">
+        <button disabled={isSaving} onClick={onSave} type="button">
+          {isSaving ? "保存中" : "保存并启用"}
+        </button>
+        <button disabled={isTesting || !canTest} onClick={onTest} type="button">
+          {isTesting ? "测试中" : "测试连接"}
+        </button>
+      </div>
+      <div className="runtime-grid embedding-runtime-grid">
+        <RuntimeCell
+          label="Runtime"
+          tone={ready ? "done" : "warn"}
+          value={runtimeStatus?.llm.embeddingProvider ?? "unknown"}
+          detail={runtimeStatus?.llm.embeddingDiagnostic ?? "waiting"}
+        />
+        <RuntimeCell
+          label="Vector"
+          tone={runtimeStatus?.llm.vectorStoreConnected ? "done" : "warn"}
+          value={runtimeStatus?.llm.embeddingIndex ?? "-"}
+          detail={`${runtimeStatus?.llm.vectorStoreMode ?? "memory"} / ${runtimeStatus?.llm.embeddingDimensions ?? 0} dims`}
+        />
+      </div>
+      <div className="llm-provider-list" aria-label="已保存 Embedding Provider">
+        {providers.length === 0 ? (
+          <div className="llm-provider-empty">暂无已保存 Embedding Provider</div>
+        ) : (
+          providers.map((provider) => (
+            <div className={`llm-provider-row ${provider.active ? "active" : ""}`} key={provider.id}>
+              <div>
+                <strong>{provider.providerName}</strong>
+                <span>{provider.mode.toUpperCase()} / {provider.model}</span>
+                <small>{provider.baseUrl}</small>
+                {provider.lastTestMessage && (
+                  <small className="llm-test-detail" title={provider.lastTestMessage}>
+                    {provider.lastTestMessage}
+                  </small>
+                )}
+              </div>
+              <div className="llm-provider-side">
+                <small>{provider.apiKeyMasked || "no key"}</small>
+                <button
+                  disabled={provider.active || activatingProviderId === provider.id}
+                  onClick={() => onActivateProvider(provider.id)}
+                  type="button"
+                >
+                  {provider.active ? "当前" : activatingProviderId === provider.id ? "启用中" : "启用"}
+                </button>
+              </div>
+              {provider.lastTestStatus && (
+                <em className={provider.lastTestStatus === "OK" ? "ok" : ""}>
+                  {provider.lastTestStatus}
+                </em>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+      {status && <p className={`llm-status ${status.startsWith("连接成功") ? "success" : ""}`}>{status}</p>}
+    </section>
+  );
+}
+
 function RuntimeStatusPanel({
   isRebuildingVectorIndex,
   onRebuildVectorIndex,
@@ -2345,6 +3390,12 @@ function RuntimeStatusPanel({
           tone={vectorStoreReady ? "done" : "warn"}
           value={status?.llm.vectorStoreMode ?? "memory"}
           detail={vectorStoreReady ? status?.llm.vectorStoreEndpoint ?? "" : "memory fallback"}
+        />
+        <RuntimeCell
+          label="Rerank"
+          tone={status?.llm.rerankProvider === "rerank-disabled" ? "warn" : "done"}
+          value={status?.llm.rerankProvider ?? "unknown"}
+          detail={status?.llm.rerankDiagnostic ?? "waiting"}
         />
       </div>
       <button
@@ -2547,12 +3598,45 @@ function SseProgressInspectorPanel({ inspect }: { inspect: SseInspectState }) {
 
 function AsrDiagnosticPanel({
   diagnostic,
+  isAligningOcr,
+  isEvaluatingOcr,
+  isFusingOcr,
+  isRefiningLowConfidence,
+  isRepairingText,
+  ocrQuality,
+  ocrStatus,
+  onAlignOcr,
+  onEvaluateOcr,
+  onFuseOcr,
+  onRefineLowConfidence,
+  onRepairText,
   onRefresh,
+  onReprocess,
+  textRepairStatus,
+  video,
 }: {
   diagnostic: AsrDiagnostic | null;
+  isAligningOcr: boolean;
+  isEvaluatingOcr: boolean;
+  isFusingOcr: boolean;
+  isRefiningLowConfidence: boolean;
+  isRepairingText: boolean;
+  ocrQuality: OcrSubtitleQuality | null;
+  ocrStatus: string;
+  onAlignOcr: () => void;
+  onEvaluateOcr: () => void;
+  onFuseOcr: () => void;
+  onRefineLowConfidence: () => void;
+  onRepairText: () => void;
   onRefresh: () => void;
+  onReprocess: () => void;
+  textRepairStatus: string;
+  video: VideoAsset | null;
 }) {
   const ready = Boolean(diagnostic?.asrJsonExists && diagnostic.transcriptCount > 0);
+  const running = diagnostic?.lastJobStatus === "RUNNING";
+  const quality = diagnostic?.quality;
+  const qualityReady = Boolean(quality && !quality.garbledRisk && quality.traditionalCount === 0);
   return (
     <section className="panel compact-panel">
       <div className="panel-title">
@@ -2569,6 +3653,22 @@ function AsrDiagnosticPanel({
         <div className="library-empty">Select a video to inspect audio.wav, asr.json and whisper logs.</div>
       ) : (
         <div className="threadpool-grid">
+          {quality && (
+            <>
+              <RuntimeCell
+                label="Text Quality"
+                tone={qualityReady ? "done" : "warn"}
+                value={qualityReady ? "clean" : "risk"}
+                detail={`garbled=${quality.garbledRisk}, traditional=${quality.traditionalCount}, cjk=${quality.cjkCount}`}
+              />
+              <RuntimeCell
+                label="Sample"
+                tone={qualityReady ? "done" : "warn"}
+                value={quality.replacementCount === 0 ? "no mojibake" : `${quality.replacementCount} replacements`}
+                detail={quality.sample || "waiting for ASR sample"}
+              />
+            </>
+          )}
           <RuntimeCell
             label="Model"
             tone={diagnostic.modelExists ? "done" : "warn"}
@@ -2576,10 +3676,28 @@ function AsrDiagnosticPanel({
             detail={diagnostic.modelPath}
           />
           <RuntimeCell
+            label="Decode Params"
+            tone="done"
+            value={`beam ${diagnostic.beamSize}`}
+            detail={`lang=${diagnostic.language || "auto"}, bestOf=${diagnostic.bestOf}, maxLen=${diagnostic.maxLen}`}
+          />
+          <RuntimeCell
+            label="Hotword Prompt"
+            tone={diagnostic.promptPreview ? "done" : "warn"}
+            value={diagnostic.promptPreview ? "enabled" : "empty"}
+            detail={diagnostic.promptPreview || "no prompt configured"}
+          />
+          <RuntimeCell
             label="Audio"
             tone={diagnostic.audioExists ? "done" : "warn"}
             value={diagnostic.audioExists ? `${bytesToMb(diagnostic.audioSizeBytes)} MB` : "missing"}
             detail="audio.wav from ffmpeg"
+          />
+          <RuntimeCell
+            label="Audio Filter"
+            tone={diagnostic.audioFilter ? "done" : "warn"}
+            value={diagnostic.audioFilter ? "enhanced" : "basic"}
+            detail={diagnostic.audioFilter || "no ffmpeg audio filter"}
           />
           <RuntimeCell
             label="ASR JSON"
@@ -2607,6 +3725,349 @@ function AsrDiagnosticPanel({
           />
         </div>
       )}
+      <AdvancedOcrQualityPanel
+        disabled={!video || !ready || running || isEvaluatingOcr || isFusingOcr || isAligningOcr || isRefiningLowConfidence}
+        isAligning={isAligningOcr}
+        isEvaluating={isEvaluatingOcr}
+        isFusing={isFusingOcr}
+        isRefining={isRefiningLowConfidence}
+        onAlign={onAlignOcr}
+        onEvaluate={onEvaluateOcr}
+        onFuse={onFuseOcr}
+        onRefine={onRefineLowConfidence}
+        quality={ocrQuality}
+        status={ocrStatus}
+      />
+      <TranscriptTextRepairPanel
+        disabled={!video || !ready || running || isRepairingText || isEvaluatingOcr || isFusingOcr || isAligningOcr || isRefiningLowConfidence}
+        isRepairing={isRepairingText}
+        onRepair={onRepairText}
+        status={textRepairStatus}
+      />
+      <AsrReprocessPanel
+        disabled={!video || running || isEvaluatingOcr || isFusingOcr || isAligningOcr || isRefiningLowConfidence || isRepairingText}
+        onReprocess={onReprocess}
+        running={running}
+      />
+    </section>
+  );
+}
+
+function AsrReprocessPanel({
+  disabled,
+  onReprocess,
+  running,
+}: {
+  disabled: boolean;
+  onReprocess: () => void;
+  running: boolean;
+}) {
+  return (
+    <div className="ocr-quality-card">
+      <div className="ocr-quality-head">
+        <div>
+          <strong>ASR Reprocess</strong>
+          <small>用当前热词提示重新跑 ffmpeg + Whisper，并替换旧字幕</small>
+        </div>
+        <span className={running ? "" : "ready"}>{running ? "running" : "ready"}</span>
+      </div>
+      <div className="ocr-sample-preview">
+        <span>Source-level accuracy path</span>
+        <strong>适合老视频字幕英文术语偏差大时使用</strong>
+        <small>任务完成后会自动重建总结与向量索引，旧字幕会被本次识别结果替换。</small>
+      </div>
+      <div className="ocr-actions single-action">
+        <button disabled={disabled} onClick={onReprocess} type="button">
+          {running ? "识别中" : "重新识别字幕"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TranscriptTextRepairPanel({
+  disabled,
+  isRepairing,
+  onRepair,
+  status,
+}: {
+  disabled: boolean;
+  isRepairing: boolean;
+  onRepair: () => void;
+  status: string;
+}) {
+  return (
+    <div className="ocr-quality-card">
+      <div className="ocr-quality-head">
+        <div>
+          <strong>Context Term Repair</strong>
+          <small>视频级上下文技术词修复 / 重建总结与向量索引</small>
+        </div>
+        <span className={status.includes("repaired=") ? "ready" : ""}>
+          {isRepairing ? "running" : "guarded"}
+        </span>
+      </div>
+      <div className="ocr-sample-preview">
+        <span>Conservative ASR text layer</span>
+        <strong>Redis / MySQL / RAG / Agent / Embedding / Docker 等技术词按全片上下文修正</strong>
+        <small>仅在上下文证据足够时替换，避免把字幕改成无来源内容。</small>
+      </div>
+      <div className="ocr-actions single-action">
+        <button disabled={disabled} onClick={onRepair} type="button">
+          {isRepairing ? "修复中" : "高级文本修复"}
+        </button>
+      </div>
+      {status && <p className={`ocr-status ${status.includes("repaired=") ? "success" : ""}`}>{status}</p>}
+    </div>
+  );
+}
+
+function AdvancedOcrQualityPanel({
+  disabled,
+  isAligning,
+  isEvaluating,
+  isFusing,
+  isRefining,
+  onAlign,
+  onEvaluate,
+  onFuse,
+  onRefine,
+  quality,
+  status,
+}: {
+  disabled: boolean;
+  isAligning: boolean;
+  isEvaluating: boolean;
+  isFusing: boolean;
+  isRefining: boolean;
+  onAlign: () => void;
+  onEvaluate: () => void;
+  onFuse: () => void;
+  onRefine: () => void;
+  quality: OcrSubtitleQuality | null;
+  status: string;
+}) {
+  const hasQuality = Boolean(quality);
+  const improved = quality ? quality.averageFusedSimilarity > quality.averageSimilarity : false;
+  const replacementCount = quality?.appliedReplacementCount || quality?.replacementCount || 0;
+  const samplePreview = quality?.samples.find((sample) => sample.replacementSuggested) ?? quality?.samples[0];
+
+  return (
+    <div className="ocr-quality-card">
+      <div className="ocr-quality-head">
+        <div>
+          <strong>ASR + OCR Dual Channel</strong>
+          <small>visual subtitle evidence, strong alignment and low-confidence refinement</small>
+        </div>
+        <span className={quality?.ocrAvailable ? "ready" : ""}>
+          {quality ? `${quality.ocrHitCount}/${quality.sampledCount}` : "not tested"}
+        </span>
+      </div>
+      {hasQuality && quality ? (
+        <div className="ocr-quality-grid">
+          <RuntimeCell
+            label="ASR Similarity"
+            tone={quality.averageSimilarity >= 0.75 ? "done" : "warn"}
+            value={formatPercent(quality.averageSimilarity)}
+            detail={`CER=${formatPercent(quality.averageCer)}`}
+          />
+          <RuntimeCell
+            label="Fused Similarity"
+            tone={improved ? "done" : "warn"}
+            value={formatPercent(quality.averageFusedSimilarity)}
+            detail={`suggested=${quality.replacementCount}, applied=${quality.appliedReplacementCount}`}
+          />
+          <RuntimeCell
+            label="OCR"
+            tone={quality.ocrAvailable ? "done" : "warn"}
+            value={quality.ocrAvailable ? "available" : "unavailable"}
+            detail={quality.message}
+          />
+        </div>
+      ) : (
+        <div className="library-empty">Evaluate OCR first, then write visual evidence back when it is reliable.</div>
+      )}
+      {samplePreview && (
+        <div className="ocr-sample-preview">
+          <span>{formatTime(samplePreview.startMs)} / confidence {formatPercent(samplePreview.confidence)}</span>
+          <strong>{samplePreview.fusedText || samplePreview.asrText}</strong>
+          <small>OCR: {samplePreview.ocrText || "no visual subtitle"}</small>
+        </div>
+      )}
+      <div className="ocr-actions ocr-actions-four">
+        <button disabled={disabled} onClick={onEvaluate} type="button">
+          {isEvaluating ? "Evaluating" : "Evaluate"}
+        </button>
+        <button disabled={disabled || !quality?.ocrAvailable} onClick={onFuse} type="button">
+          {isFusing ? "Fusing" : `Safe fuse${replacementCount ? ` ${replacementCount}` : ""}`}
+        </button>
+        <button disabled={disabled || !quality?.ocrAvailable} onClick={onAlign} type="button">
+          {isAligning ? "Aligning" : "Strong align"}
+        </button>
+        <button disabled={disabled || !quality?.ocrAvailable} onClick={onRefine} type="button">
+          {isRefining ? "Refining" : "Low confidence"}
+        </button>
+      </div>
+      {status && <p className={`ocr-status ${status.includes("applied=") || status.includes("OCR ") ? "success" : ""}`}>{status}</p>}
+    </div>
+  );
+}
+
+function OcrQualityPanel({
+  disabled,
+  isEvaluating,
+  isFusing,
+  onEvaluate,
+  onFuse,
+  quality,
+  status,
+}: {
+  disabled: boolean;
+  isEvaluating: boolean;
+  isFusing: boolean;
+  onEvaluate: () => void;
+  onFuse: () => void;
+  quality: OcrSubtitleQuality | null;
+  status: string;
+}) {
+  const hasQuality = Boolean(quality);
+  const improved = quality ? quality.averageFusedSimilarity > quality.averageSimilarity : false;
+  const replacementCount = quality?.appliedReplacementCount || quality?.replacementCount || 0;
+  const samplePreview = quality?.samples.find((sample) => sample.replacementSuggested) ?? quality?.samples[0];
+
+  return (
+    <div className="ocr-quality-card">
+      <div className="ocr-quality-head">
+        <div>
+          <strong>Burned-in Subtitle OCR</strong>
+          <small>画面字幕准确率评估 / 保守融合修复</small>
+        </div>
+        <span className={quality?.ocrAvailable ? "ready" : ""}>
+          {quality ? `${quality.ocrHitCount}/${quality.sampledCount}` : "not tested"}
+        </span>
+      </div>
+      {hasQuality && quality ? (
+        <div className="ocr-quality-grid">
+          <RuntimeCell
+            label="ASR Similarity"
+            tone={quality.averageSimilarity >= 0.75 ? "done" : "warn"}
+            value={formatPercent(quality.averageSimilarity)}
+            detail={`CER=${formatPercent(quality.averageCer)}`}
+          />
+          <RuntimeCell
+            label="Fused Similarity"
+            tone={improved ? "done" : "warn"}
+            value={formatPercent(quality.averageFusedSimilarity)}
+            detail={`suggested=${quality.replacementCount}, applied=${quality.appliedReplacementCount}`}
+          />
+          <RuntimeCell
+            label="OCR"
+            tone={quality.ocrAvailable ? "done" : "warn"}
+            value={quality.ocrAvailable ? "available" : "unavailable"}
+            detail={quality.message}
+          />
+        </div>
+      ) : (
+        <div className="library-empty">先评估 OCR 命中率，再决定是否写回融合结果。</div>
+      )}
+      {samplePreview && (
+        <div className="ocr-sample-preview">
+          <span>{formatTime(samplePreview.startMs)} · confidence {formatPercent(samplePreview.confidence)}</span>
+          <strong>{samplePreview.fusedText || samplePreview.asrText}</strong>
+          <small>OCR: {samplePreview.ocrText || "no visual subtitle"}</small>
+        </div>
+      )}
+      <div className="ocr-actions">
+        <button disabled={disabled} onClick={onEvaluate} type="button">
+          {isEvaluating ? "评估中" : "统计准确率"}
+        </button>
+        <button disabled={disabled || !quality?.ocrAvailable} onClick={onFuse} type="button">
+          {isFusing ? "融合中" : `一键融合修复${replacementCount ? ` ${replacementCount}` : ""}`}
+        </button>
+      </div>
+      {status && <p className={`ocr-status ${status.includes("已写回") || status.includes("OCR 命中") ? "success" : ""}`}>{status}</p>}
+    </div>
+  );
+}
+
+function TermGlossaryPanel({
+  entries,
+  form,
+  isSaving,
+  onAdd,
+  onChange,
+  onDelete,
+  onRefresh,
+  onToggle,
+  pendingEntryId,
+  status,
+}: {
+  entries: TermGlossaryEntry[];
+  form: TermGlossaryFormState;
+  isSaving: boolean;
+  onAdd: () => void;
+  onChange: (form: TermGlossaryFormState) => void;
+  onDelete: (entryId: number) => void;
+  onRefresh: () => void;
+  onToggle: (entry: TermGlossaryEntry) => void;
+  pendingEntryId: number | null;
+  status: string;
+}) {
+  const canAdd = form.sourcePattern.trim().length > 0 && form.replacement.trim().length > 0 && !isSaving;
+  return (
+    <section className="panel compact-panel">
+      <div className="panel-title">
+        <KeyRound size={19} />
+        <h2>ASR Term Glossary</h2>
+        <span className={`panel-count ${entries.some((entry) => entry.enabled) ? "ready" : ""}`}>
+          {entries.filter((entry) => entry.enabled).length}/{entries.length}
+        </span>
+        <button className="panel-action" onClick={onRefresh} type="button">
+          refresh
+        </button>
+      </div>
+      <div className="term-glossary-form">
+        <input
+          aria-label="Misrecognized term"
+          onChange={(event) => onChange({ ...form, sourcePattern: event.target.value })}
+          placeholder="misheard term or regex"
+          type="text"
+          value={form.sourcePattern}
+        />
+        <input
+          aria-label="Canonical term"
+          onChange={(event) => onChange({ ...form, replacement: event.target.value })}
+          placeholder="canonical term"
+          type="text"
+          value={form.replacement}
+        />
+        <button disabled={!canAdd} onClick={onAdd} type="button">
+          {isSaving ? "saving" : "add term"}
+        </button>
+      </div>
+      {entries.length === 0 ? (
+        <div className="library-empty">Add terms like my sql -&gt; MySQL or cloud code -&gt; Claude Code.</div>
+      ) : (
+        <div className="term-glossary-list">
+          {entries.map((entry) => (
+            <div className={`term-glossary-row ${entry.enabled ? "enabled" : ""}`} key={entry.id}>
+              <div>
+                <span>{entry.sourcePattern}</span>
+                <strong>{entry.replacement}</strong>
+              </div>
+              <div className="term-glossary-actions">
+                <button disabled={pendingEntryId === entry.id} onClick={() => onToggle(entry)} type="button">
+                  {entry.enabled ? "disable" : "enable"}
+                </button>
+                <button disabled={pendingEntryId === entry.id} onClick={() => onDelete(entry.id)} type="button">
+                  delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {status && <p className={`ocr-status ${status.includes("saved") || status.includes("enabled") ? "success" : ""}`}>{status}</p>}
     </section>
   );
 }
@@ -2863,8 +4324,10 @@ function RetrievalInspectorPanel({
   const topCosine = traceValue(vectorDetail, "topCosine");
   const usable = traceValue(vectorDetail, "usable") || "-";
   const topHit = traceValue(vectorDetail, "top") || "-";
+  const rerankProvider = traceValue(rerankDetail, "provider") || status?.llm.rerankProvider || "waiting";
   const topK = traceValue(rerankDetail, "topK") || "-";
   const keywordScore = traceValue(rerankDetail, "keywordScore") || "-";
+  const rerankScore = traceValue(rerankDetail, "rerankScore") || "-";
   const citations = traceValue(citationDetail, "citations") || String(latestMessage?.citations?.length ?? 0);
   const rejected = traceValue(citationDetail, "rejected") || "0";
   const llmModel = traceValue(llmDetail, "model") || status?.llm.model || "-";
@@ -2905,8 +4368,8 @@ function RetrievalInspectorPanel({
           <RuntimeCell
             label="Rerank"
             tone={Number(topK) > 0 ? "done" : "warn"}
-            value={`topK=${topK}`}
-            detail={`keywordScore=${keywordScore}`}
+            value={rerankProvider}
+            detail={`topK=${topK} / keyword=${keywordScore} / rerank=${rerankScore}`}
           />
           <RuntimeCell
             label="Citation"
@@ -3320,8 +4783,14 @@ function RightWorkspacePanel({
 
 function SummaryPanel({ summaries }: { summaries: SummaryAsset[] }) {
   const [activeType, setActiveType] = useState("CORE_POINTS");
+  const [generationStatus, setGenerationStatus] = useState("");
   const activeSummary = summaries.find((summary) => summary.type === activeType) ?? summaries[0];
   const activeItems = parseSummary(activeSummary);
+  const activeTemplate = summaryTemplates.find((template) => template.type === activeType) ?? summaryTemplates[0];
+
+  function handleGenerateAsset() {
+    setGenerationStatus(`${activeTemplate.actionLabel}已准备，后续可接入大模型生成任务。`);
+  }
 
   return (
     <section className="panel summary-panel">
@@ -3338,7 +4807,10 @@ function SummaryPanel({ summaries }: { summaries: SummaryAsset[] }) {
               className={activeType === template.type ? "active" : ""}
               disabled={!available}
               key={template.type}
-              onClick={() => setActiveType(template.type)}
+              onClick={() => {
+                setActiveType(template.type);
+                setGenerationStatus("");
+              }}
               type="button"
             >
               {template.label}
@@ -3358,39 +4830,185 @@ function SummaryPanel({ summaries }: { summaries: SummaryAsset[] }) {
           <p>点击上传后，这里会展示 /api/videos/:id/summaries 返回的总结资产。</p>
         )}
       </div>
-      <button className="text-button" type="button">
-        一键生成对应的 PPT / 会议纪要 / 博客等
+      <button className="text-button summary-generate-button" disabled={!activeSummary} onClick={handleGenerateAsset} type="button">
+        {activeTemplate.actionLabel}
         <ArrowUpRight size={16} />
       </button>
+      {generationStatus && <p className="summary-generation-status">{generationStatus}</p>}
     </section>
   );
 }
 
+function KnowledgeBaseManagerPanel({
+  activeDetail,
+  activeId,
+  form,
+  isSaving,
+  knowledgeBases,
+  onAddVideo,
+  onChangeForm,
+  onComparePrompt,
+  onCreate,
+  onDelete,
+  onRemoveVideo,
+  onSelect,
+  pendingVideoId,
+  status,
+  videos,
+}: {
+  activeDetail: KnowledgeBaseDetail | null;
+  activeId: number | null;
+  form: KnowledgeBaseFormState;
+  isSaving: boolean;
+  knowledgeBases: KnowledgeBase[];
+  onAddVideo: (videoId: number) => void;
+  onChangeForm: (form: KnowledgeBaseFormState) => void;
+  onComparePrompt: () => void;
+  onCreate: () => void;
+  onDelete: () => void;
+  onRemoveVideo: (videoId: number) => void;
+  onSelect: (knowledgeBaseId: number) => void;
+  pendingVideoId: number | null;
+  status: string;
+  videos: VideoAsset[];
+}) {
+  const memberIds = new Set(activeDetail?.videos.map((video) => video.id) ?? []);
+  const activeCount = activeDetail?.videos.length ?? 0;
+
+  return (
+    <div className="knowledge-manager">
+      <div className="knowledge-manager-head">
+        <div>
+          <strong>知识库管理</strong>
+          <small>{activeId ? `${activeCount} 个视频参与聚合问答` : "未选择时使用默认全量知识库"}</small>
+        </div>
+        <button disabled={!activeId || activeCount < 2} onClick={onComparePrompt} type="button">
+          对比观点
+        </button>
+        <button className="danger" disabled={!activeId} onClick={onDelete} type="button">
+          删除
+        </button>
+      </div>
+      <div className="knowledge-create-row">
+        <input
+          aria-label="知识库名称"
+          onChange={(event) => onChangeForm({ ...form, name: event.currentTarget.value })}
+          placeholder="知识库名称"
+          value={form.name}
+        />
+        <button disabled={isSaving || !form.name.trim()} onClick={onCreate} type="button">
+          {isSaving ? "创建中" : "创建"}
+        </button>
+      </div>
+      <input
+        aria-label="知识库描述"
+        className="knowledge-description-input"
+        onChange={(event) => onChangeForm({ ...form, description: event.currentTarget.value })}
+        placeholder="描述，可选"
+        value={form.description}
+      />
+      <div className="knowledge-base-tabs" aria-label="知识库列表">
+        {knowledgeBases.length === 0 ? (
+          <span>还没有自定义知识库</span>
+        ) : (
+          knowledgeBases.map((item) => (
+            <button
+              className={item.id === activeId ? "active" : ""}
+              key={item.id}
+              onClick={() => onSelect(item.id)}
+              type="button"
+            >
+              <strong>{item.name}</strong>
+              <small>{item.videoCount}</small>
+            </button>
+          ))
+        )}
+      </div>
+      {activeId && (
+        <div className="knowledge-video-list" aria-label="知识库视频成员">
+          {videos.length === 0 ? (
+            <span>视频库为空</span>
+          ) : (
+            videos.map((video) => {
+              const included = memberIds.has(video.id);
+              return (
+                <button
+                  className={included ? "included" : ""}
+                  disabled={pendingVideoId === video.id}
+                  key={video.id}
+                  onClick={() => included ? onRemoveVideo(video.id) : onAddVideo(video.id)}
+                  type="button"
+                >
+                  <span>{video.originalName}</span>
+                  <small>{included ? "已加入" : "加入"} · video#{video.id}</small>
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+      {status && <p className={`knowledge-status ${status.startsWith("已") || status.includes("已") ? "success" : ""}`}>{status}</p>}
+    </div>
+  );
+}
+
 function AgentPanel({
+  activeKnowledgeBaseDetail,
+  activeKnowledgeBaseId,
   disabled,
   context,
+  isSavingKnowledgeBase,
+  knowledgeBaseForm,
+  knowledgeBases,
+  knowledgeBaseStatus,
   mode,
   messages,
+  onAddVideoToKnowledgeBase,
   onClear,
   onCitationSelect,
+  onCreateKnowledgeBase,
+  onDeleteKnowledgeBase,
+  onKnowledgeBaseFormChange,
   query,
   video,
   onModeChange,
   onQueryChange,
+  onRemoveVideoFromKnowledgeBase,
+  onSelectKnowledgeBase,
   onAsk,
+  pendingKnowledgeBaseVideoId,
+  videos,
 }: {
+  activeKnowledgeBaseDetail: KnowledgeBaseDetail | null;
+  activeKnowledgeBaseId: number | null;
   disabled: boolean;
   context: AgentContext | null;
+  isSavingKnowledgeBase: boolean;
+  knowledgeBaseForm: KnowledgeBaseFormState;
+  knowledgeBases: KnowledgeBase[];
+  knowledgeBaseStatus: string;
   mode: AgentMode;
   messages: ChatMessage[];
+  onAddVideoToKnowledgeBase: (videoId: number) => void;
   onClear: () => void;
   onCitationSelect: (citation: AgentCitation) => void;
+  onCreateKnowledgeBase: () => void;
+  onDeleteKnowledgeBase: () => void;
+  onKnowledgeBaseFormChange: (form: KnowledgeBaseFormState) => void;
   query: string;
   video: VideoAsset | null;
   onModeChange: (mode: AgentMode) => void;
   onQueryChange: (value: string) => void;
+  onRemoveVideoFromKnowledgeBase: (videoId: number) => void;
+  onSelectKnowledgeBase: (knowledgeBaseId: number) => void;
   onAsk: () => void;
+  pendingKnowledgeBaseVideoId: number | null;
+  videos: VideoAsset[];
 }) {
+  const activeKnowledgeBaseName = activeKnowledgeBaseDetail?.knowledgeBase.name
+    ?? knowledgeBases.find((item) => item.id === activeKnowledgeBaseId)?.name
+    ?? "默认全量知识库";
+
   return (
     <section className="panel agent-panel">
       <div className="panel-title">
@@ -3421,9 +5039,28 @@ function AgentPanel({
           知识库
         </button>
       </div>
+      {mode === "knowledgeBase" && (
+        <KnowledgeBaseManagerPanel
+          activeDetail={activeKnowledgeBaseDetail}
+          activeId={activeKnowledgeBaseId}
+          form={knowledgeBaseForm}
+          isSaving={isSavingKnowledgeBase}
+          knowledgeBases={knowledgeBases}
+          onAddVideo={onAddVideoToKnowledgeBase}
+          onChangeForm={onKnowledgeBaseFormChange}
+          onComparePrompt={() => onQueryChange("对比这个知识库中多个视频的核心观点差异")}
+          onCreate={onCreateKnowledgeBase}
+          onDelete={onDeleteKnowledgeBase}
+          onRemoveVideo={onRemoveVideoFromKnowledgeBase}
+          onSelect={onSelectKnowledgeBase}
+          pendingVideoId={pendingKnowledgeBaseVideoId}
+          status={knowledgeBaseStatus}
+          videos={videos}
+        />
+      )}
       <div className="agent-context-card">
         <span>
-          上下文窗口 {context ? `${context.messageCount}/${context.windowLimit}` : "0/6"}
+          {mode === "knowledgeBase" ? activeKnowledgeBaseName : "当前视频"} · 上下文窗口 {context ? `${context.messageCount}/${context.windowLimit}` : "0/6"}
         </span>
         <small>
           {context?.contextReady

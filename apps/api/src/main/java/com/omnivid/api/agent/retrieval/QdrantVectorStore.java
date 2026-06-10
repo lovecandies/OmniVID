@@ -184,6 +184,26 @@ public class QdrantVectorStore {
         }
     }
 
+    public boolean rebuild(
+            List<TranscriptSegment> segments,
+            Map<Long, Map<Integer, Double>> segmentVectors,
+            int dimensions
+    ) {
+        if (dimensions <= 0) {
+            return false;
+        }
+        try {
+            if (!recreateCollection(dimensions)) {
+                return false;
+            }
+            upsertMissingSegments(segments, segmentVectors, dimensions);
+            return true;
+        } catch (Exception exception) {
+            log.warn("Qdrant rebuild failed: {}", exception.getMessage());
+            return false;
+        }
+    }
+
     private boolean ensureCollection(int dimensions) throws Exception {
         if (readyDimensions == dimensions) {
             return true;
@@ -201,7 +221,13 @@ public class QdrantVectorStore {
             if (existingDimensions > 0 && existingDimensions != dimensions) {
                 log.warn("Qdrant collection {} dimensions {} do not match embedding dimensions {}",
                         collectionName, existingDimensions, dimensions);
-                return false;
+                HttpResponse<String> delete = send("DELETE", "/collections/" + collectionName + "?timeout=30", null);
+                if (delete.statusCode() < 200 || delete.statusCode() >= 300) {
+                    return false;
+                }
+                indexedContentHash.clear();
+                readyDimensions = 0;
+                return createCollection(dimensions);
             }
             readyDimensions = dimensions;
             return true;
@@ -210,6 +236,10 @@ public class QdrantVectorStore {
             return false;
         }
 
+        return createCollection(dimensions);
+    }
+
+    private boolean createCollection(int dimensions) throws Exception {
         Map<String, Object> payload = Map.of(
                 "vectors", Map.of(
                         "size", dimensions,
@@ -222,6 +252,16 @@ public class QdrantVectorStore {
             readyDimensions = dimensions;
         }
         return created;
+    }
+
+    private boolean recreateCollection(int dimensions) throws Exception {
+        HttpResponse<String> delete = send("DELETE", "/collections/" + collectionName + "?timeout=30", null);
+        if (delete.statusCode() != 404 && (delete.statusCode() < 200 || delete.statusCode() >= 300)) {
+            return false;
+        }
+        indexedContentHash.clear();
+        readyDimensions = 0;
+        return createCollection(dimensions);
     }
 
     private void upsertMissingSegments(

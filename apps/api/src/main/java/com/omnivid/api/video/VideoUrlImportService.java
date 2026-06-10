@@ -78,6 +78,8 @@ public class VideoUrlImportService {
                 refererFor(platform),
                 "--add-header",
                 "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
+                "--add-header",
+                "Origin:" + originFor(platform),
                 "--ffmpeg-location",
                 ffmpegPath,
                 "--merge-output-format",
@@ -219,6 +221,15 @@ public class VideoUrlImportService {
             case "Douyin" -> "https://www.douyin.com/";
             case "Xiaohongshu" -> "https://www.xiaohongshu.com/";
             default -> "https://www.bilibili.com/";
+        };
+    }
+
+    private String originFor(String platform) {
+        return switch (platform) {
+            case "Bilibili" -> "https://www.bilibili.com";
+            case "Douyin" -> "https://www.douyin.com";
+            case "Xiaohongshu" -> "https://www.xiaohongshu.com";
+            default -> "https://www.bilibili.com";
         };
     }
 
