@@ -147,3 +147,18 @@ remote: https://github.com/lovecandies/OmniVID.git
 3. 新增 `docs/v1.0/full-interview-question-bank.md`，覆盖 MySQL、Redis、Java 并发/JVM、Spring、MyBatis/JDBC、MQ、网络/OS、AI Agent/RAG、ASR/OCR、URL 导入、诊断台和 1.0 边界。
 4. 在旧专项文档顶部追加 `Version 1.0 同步补强`，使原文档路径也能直接看到当前实现口径。
 5. 更新根 `README.md` 和 `docs/v1.0/README.md`，把完整题库与功能地图加入 GitHub 入口。
+
+## 1.0 连续交接备份追加记录
+
+用户继续要求：
+
+```text
+总结一下本video项目我们对话的所有关键性记录。备份一下你所做的所有事情，每个代码文件都做了什么。以便于聊天记录丢失无法继续以后版本的更新，依旧上传到github
+```
+
+本次追加执行策略：
+
+1. 新增 `docs/v1.0/conversation-and-work-backup.md`，按时间线备份产品定位、求职方向、前端演进、后端链路、ASR 准确率优化、URL 导入边界、DeepSeek Agent、Embedding/Qdrant/rerank、多视频知识库、诊断台、1.0 收束和 2.0 边界。
+2. 新增 `docs/v1.0/code-file-responsibility-map.md`，逐个说明后端 Java 文件、前端文件、脚本、基础设施配置、测试文件和文档文件职责。
+3. 更新根 `README.md` 和 `docs/v1.0/README.md`，让 GitHub 首页和 v1.0 文档入口都能直接找到这两份交接文档。
+4. 本次只做文档备份和索引更新，不改业务代码，不提交 API Key、Cookie、上传视频或数据库数据。
