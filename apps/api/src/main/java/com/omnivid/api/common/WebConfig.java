@@ -15,6 +15,7 @@ public class WebConfig implements WebMvcConfigurer {
                         "http://localhost:5174",
                         "http://127.0.0.1:5174")
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-                .allowedHeaders("*");
+                .allowedHeaders("*")
+                .exposedHeaders("Content-Disposition", "X-OmniVid-Model", "X-OmniVid-Generation-Mode", "X-Trace-Id");
     }
 }

@@ -1,9 +1,13 @@
 package com.omnivid.api.runtime;
 
+import com.omnivid.api.job.mq.ProcessingMqStatusResponse;
+
 public record RuntimeStatusResponse(
         String profile,
         RuntimeDatabaseStatus database,
         RuntimeRedisStatus redis,
+        ProcessingMqStatusResponse processing,
+        RuntimeObservabilityStatus observability,
         RuntimeLlmStatus llm
 ) {
     public record RuntimeDatabaseStatus(
@@ -21,6 +25,14 @@ public record RuntimeStatusResponse(
             String rateLimitMode,
             String answerCacheMode,
             String shortTermMemoryMode
+    ) {
+    }
+
+    public record RuntimeObservabilityStatus(
+            String logFormat,
+            String traceHeader,
+            String traceId,
+            String hook
     ) {
     }
 

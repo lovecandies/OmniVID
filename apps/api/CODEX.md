@@ -13,6 +13,22 @@
 1. `GET /api/runtime/status` -> `profile=docker`，`database.product=MySQL`，`redis.connected=true`，`llm.vectorStoreMode=qdrant`。
 2. `GET /api/videos` -> 返回 MySQL 中持久化的视频库，而不是 H2 临时数据。
 
+## RocketMQ 异步解析调度
+
+Docker 模式下视频上传、失败重试和 ASR 重跑通过 MySQL Outbox + RocketMQ 调度。消息消费仍调用统一的视频解析 DAG，任务细粒度进度继续写入 `processing_job`。
+
+关键接口：
+
+1. `GET /api/jobs/mq/status` -> 查看调度模式、RocketMQ 连接、待发布和 DLQ 数量。
+2. `GET /api/jobs/events` -> 查看解析事件状态。
+3. `POST /api/jobs/events/{eventId}/retry` -> 把 DLQ 或发布失败事件重新放回 Outbox。
+
+黑盒验证目标：
+
+1. Docker 模式 `processing.mode=rocketmq` 且 `connected=true`。
+2. 解析事件最终进入 `CONSUMED`。
+3. 重复事件不会重复执行解析 DAG。
+
 ## 字幕质量链路
 
 ASR 输出进入 MySQL 前必须经过 `SubtitleTextSanitizer` 清洗；读取字幕和总结时也会做编码自愈，避免页面展示乱码。

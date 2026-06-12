@@ -1,8 +1,7 @@
 package com.omnivid.api.agent.retrieval;
 
 import com.omnivid.api.common.ApiException;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
+import com.omnivid.api.security.ProviderSecretService;
 import java.util.List;
 import java.util.Locale;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -14,13 +13,16 @@ import org.springframework.stereotype.Service;
 public class EmbeddingProviderService {
     private final EmbeddingProviderRepository providers;
     private final OpenAiCompatibleEmbeddingProvider embeddingProvider;
+    private final ProviderSecretService secrets;
 
     public EmbeddingProviderService(
             EmbeddingProviderRepository providers,
-            OpenAiCompatibleEmbeddingProvider embeddingProvider
+            OpenAiCompatibleEmbeddingProvider embeddingProvider,
+            ProviderSecretService secrets
     ) {
         this.providers = providers;
         this.embeddingProvider = embeddingProvider;
+        this.secrets = secrets;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -50,7 +52,7 @@ public class EmbeddingProviderService {
                 mode,
                 baseUrl,
                 model,
-                encode(apiKey),
+                secrets.encrypt(apiKey),
                 mask(apiKey),
                 timeoutSeconds
         );
@@ -67,6 +69,40 @@ public class EmbeddingProviderService {
         EmbeddingProviderConfig active = providers.findById(provider.id()).orElseThrow();
         configureProvider(active);
         return EmbeddingProviderResponse.from(active);
+    }
+
+    public EmbeddingProviderResponse rotateKey(long id, EmbeddingProviderRotateRequest request) {
+        EmbeddingProviderConfig provider = providers.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Embedding provider not found"));
+        String apiKey = request.apiKey() == null ? "" : request.apiKey().trim();
+        if (!"bge".equals(provider.mode()) && apiKey.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Embedding API Key is required for " + provider.mode());
+        }
+        providers.updateKey(provider.id(), secrets.encrypt(apiKey), mask(apiKey));
+        EmbeddingProviderConfig updated = providers.findById(provider.id()).orElseThrow();
+        if (updated.active() && updated.enabled()) {
+            configureProvider(updated);
+        }
+        return EmbeddingProviderResponse.from(updated);
+    }
+
+    public EmbeddingProviderResponse disable(long id) {
+        EmbeddingProviderConfig provider = providers.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Embedding provider not found"));
+        providers.disable(provider.id());
+        if (provider.active()) {
+            embeddingProvider.configure(false, "local", "", "", "", provider.timeoutSeconds());
+        }
+        return EmbeddingProviderResponse.from(providers.findById(provider.id()).orElseThrow());
+    }
+
+    public void delete(long id) {
+        EmbeddingProviderConfig provider = providers.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Embedding provider not found"));
+        providers.delete(provider.id());
+        if (provider.active()) {
+            embeddingProvider.configure(false, "local", "", "", "", provider.timeoutSeconds());
+        }
     }
 
     public EmbeddingProviderTestResponse testActive() {
@@ -90,7 +126,7 @@ public class EmbeddingProviderService {
         embeddingProvider.configure(
                 provider.enabled(),
                 provider.mode(),
-                decode(provider.apiKeyEncoded()),
+                secrets.decrypt(provider.apiKeyEncoded()),
                 provider.baseUrl(),
                 provider.model(),
                 provider.timeoutSeconds()
@@ -151,17 +187,6 @@ public class EmbeddingProviderService {
             return 30;
         }
         return Math.min(120, Math.max(5, value));
-    }
-
-    private String encode(String apiKey) {
-        return Base64.getEncoder().encodeToString(apiKey.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private String decode(String encoded) {
-        if (encoded == null || encoded.isBlank()) {
-            return "";
-        }
-        return new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
     }
 
     private String mask(String apiKey) {

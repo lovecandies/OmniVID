@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import SparkMD5 from "spark-md5";
 import {
   ArrowUpRight,
   Bot,
@@ -8,13 +9,18 @@ import {
   ChevronRight,
   Clock3,
   Database,
+  Download,
   FileText,
   Fingerprint,
   GitBranch,
+  History,
   KeyRound,
   Link2,
   MessageSquareText,
+  PencilLine,
   Play,
+  RotateCcw,
+  Save,
   Search,
   Send,
   ShieldCheck,
@@ -26,6 +32,7 @@ import {
 import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
+const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
 
 type PipelineStep = {
   label: string;
@@ -90,6 +97,39 @@ type ApiTranscriptSegment = {
   content: string;
 };
 
+type TranscriptVersion = {
+  id: number;
+  videoId: number;
+  versionNo: number;
+  source: string;
+  note: string;
+  segmentCount: number;
+  preview: string;
+  createdAt: string;
+};
+
+type TranscriptVersionSegment = {
+  segmentIndex: number;
+  startMs: number;
+  endMs: number;
+  speaker: string;
+  content: string;
+  currentContent: string;
+  changed: boolean;
+};
+
+type TranscriptVersionDetail = {
+  id: number;
+  videoId: number;
+  versionNo: number;
+  source: string;
+  note: string;
+  segmentCount: number;
+  changedCount: number;
+  createdAt: string;
+  segments: TranscriptVersionSegment[];
+};
+
 type SummaryAsset = {
   id: number;
   videoId: number;
@@ -97,6 +137,8 @@ type SummaryAsset = {
   title: string;
   contentJson: string;
 };
+
+type ExportFormat = "MARKDOWN" | "DOCX" | "PPTX";
 
 type CompleteUploadResponse = {
   deduplicated: boolean;
@@ -173,6 +215,46 @@ type KnowledgeBase = {
 type KnowledgeBaseDetail = {
   knowledgeBase: KnowledgeBase;
   videos: VideoAsset[];
+};
+
+type KnowledgeBaseCoverageVideo = {
+  videoId: number;
+  originalName: string;
+  status: string;
+  durationMs: number;
+  transcriptCount: number;
+  firstStartMs: number;
+  lastEndMs: number;
+};
+
+type KnowledgeBaseCoverage = {
+  knowledgeBase: KnowledgeBase;
+  videoCount: number;
+  readyVideoCount: number;
+  transcriptCount: number;
+  totalDurationMs: number;
+  summary: string;
+  videos: KnowledgeBaseCoverageVideo[];
+};
+
+type KnowledgeBaseCompareCitation = AgentCitation;
+
+type KnowledgeBaseVideoViewpoint = {
+  videoId: number;
+  originalName: string;
+  viewpoint: string;
+  citations: KnowledgeBaseCompareCitation[];
+};
+
+type KnowledgeBaseCompareReport = {
+  knowledgeBaseId: number;
+  knowledgeBaseName: string;
+  question: string;
+  videoCount: number;
+  sharedThemes: string[];
+  differences: string[];
+  viewpoints: KnowledgeBaseVideoViewpoint[];
+  citations: KnowledgeBaseCompareCitation[];
 };
 
 type KnowledgeBaseFormState = {
@@ -254,6 +336,60 @@ type EmbeddingTestResponse = {
   dimensions: number;
 };
 
+type RerankMode = "bge" | "openai-compatible";
+
+type RerankFormState = {
+  providerName: string;
+  mode: RerankMode;
+  apiKey: string;
+  baseUrl: string;
+  endpoint: string;
+  model: string;
+  timeoutSeconds: number;
+};
+
+type RerankProvider = {
+  id: number;
+  providerName: string;
+  mode: RerankMode;
+  baseUrl: string;
+  endpoint: string;
+  model: string;
+  apiKeyMasked: string;
+  timeoutSeconds: number;
+  enabled: boolean;
+  active: boolean;
+  lastTestStatus?: string;
+  lastTestMessage?: string;
+};
+
+type RerankTestResponse = {
+  success: boolean;
+  message: string;
+  providerName: string;
+  model: string;
+};
+
+type ChunkUploadSessionResponse = {
+  sessionId: string;
+  fileName: string;
+  fileSize: number;
+  fileMd5: string;
+  partSize: number;
+  totalParts: number;
+  uploadedBytes: number;
+  status: string;
+  uploadedParts: number[];
+  missingParts: number[];
+  deduplicated: boolean;
+  upload?: CompleteUploadResponse | null;
+};
+
+type ChunkUploadCompleteResponse = {
+  session: ChunkUploadSessionResponse;
+  upload: CompleteUploadResponse;
+};
+
 type RuntimeStatus = {
   profile: string;
   database: {
@@ -269,6 +405,25 @@ type RuntimeStatus = {
     rateLimitMode: string;
     answerCacheMode: string;
     shortTermMemoryMode: string;
+  };
+  processing: {
+    mode: string;
+    connected: boolean;
+    publisherConnected: boolean;
+    consumerConnected: boolean;
+    namesrvAddr: string;
+    topic: string;
+    pendingEvents: number;
+    publishedEvents: number;
+    consumedEvents: number;
+    dlqEvents: number;
+    lastError: string;
+  };
+  observability: {
+    logFormat: string;
+    traceHeader: string;
+    traceId: string;
+    hook: string;
   };
   llm: {
     chatEnabled: boolean;
@@ -387,6 +542,8 @@ type AsrDiagnostic = {
   lastJobError?: string | null;
   ffmpegLogTail: string;
   asrLogTail: string;
+  ocrAutoFusionEnabled: boolean;
+  ocrAutoFusionMode: string;
 };
 
 type AsrTextQuality = {
@@ -621,10 +778,82 @@ async function apiFormRequest<T>(path: string, body: FormData): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function apiEmptyRequest(path: string, init?: RequestInit) {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    const message = await readApiError(response);
+    throw new Error(message || `Request failed: ${response.status}`);
+  }
+}
+
+async function downloadVideoExport(videoId: number, summaryType: string, format: ExportFormat) {
+  const response = await fetch(`${API_BASE}/api/videos/${videoId}/exports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ summaryType, format }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response));
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plainName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+  const extension = format === "MARKDOWN" ? "md" : format.toLowerCase();
+  const filename = encodedName
+    ? decodeURIComponent(encodedName)
+    : plainName ?? `omnivid-export.${extension}`;
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  return {
+    mode: response.headers.get("X-OmniVid-Generation-Mode") ?? "generated",
+    model: response.headers.get("X-OmniVid-Model") ?? "unknown",
+    filename,
+  };
+}
+
+async function calculateFileMd5(file: File) {
+  const spark = new SparkMD5.ArrayBuffer();
+  for (let offset = 0; offset < file.size; offset += UPLOAD_CHUNK_SIZE) {
+    const chunk = file.slice(offset, Math.min(offset + UPLOAD_CHUNK_SIZE, file.size));
+    spark.append(await chunk.arrayBuffer());
+  }
+  return spark.end();
+}
+
 async function uploadVideoFile(file: File) {
-  const formData = new FormData();
-  formData.append("file", file);
-  return apiFormRequest<CompleteUploadResponse>("/api/videos/upload/file", formData);
+  const fileMd5 = await calculateFileMd5(file);
+  const totalParts = Math.ceil(file.size / UPLOAD_CHUNK_SIZE);
+  const session = await apiJsonRequest<ChunkUploadSessionResponse>("/api/videos/upload/chunked/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      fileMd5,
+      partSize: UPLOAD_CHUNK_SIZE,
+      totalParts,
+    }),
+  });
+  if (session.deduplicated && session.upload) {
+    return session.upload;
+  }
+
+  for (const partNumber of session.missingParts) {
+    const start = partNumber * UPLOAD_CHUNK_SIZE;
+    const end = Math.min(start + UPLOAD_CHUNK_SIZE, file.size);
+    const formData = new FormData();
+    formData.append("part", file.slice(start, end), `${file.name}.part-${partNumber}`);
+    await apiFormRequest(`/api/videos/upload/chunked/sessions/${session.sessionId}/parts/${partNumber}`, formData);
+  }
+
+  const completed = await apiJsonRequest<ChunkUploadCompleteResponse>(
+    `/api/videos/upload/chunked/sessions/${session.sessionId}/complete`,
+    { method: "POST" },
+  );
+  return completed.upload;
 }
 
 async function importVideoUrl(url: string, options: UrlImportOptions) {
@@ -662,6 +891,27 @@ async function searchTranscripts(videoId: number, keyword: string) {
   );
 }
 
+async function listTranscriptVersions(videoId: number) {
+  return apiJsonRequest<TranscriptVersion[]>(`/api/videos/${videoId}/transcripts/versions`);
+}
+
+async function getTranscriptVersionDetail(videoId: number, versionId: number) {
+  return apiJsonRequest<TranscriptVersionDetail>(`/api/videos/${videoId}/transcripts/versions/${versionId}`);
+}
+
+async function editTranscriptSegment(videoId: number, segmentId: number, content: string) {
+  return apiJsonRequest<VideoDetailResponse>(`/api/videos/${videoId}/transcripts/${segmentId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ content }),
+  });
+}
+
+async function restoreTranscriptVersion(videoId: number, versionId: number) {
+  return apiJsonRequest<VideoDetailResponse>(`/api/videos/${videoId}/transcripts/versions/${versionId}/restore`, {
+    method: "POST",
+  });
+}
+
 async function askAgent(videoId: number, question: string) {
   return apiJsonRequest<AgentAskResponse>(`/api/videos/${videoId}/agent/ask`, {
     method: "POST",
@@ -692,6 +942,17 @@ async function createKnowledgeBase(form: KnowledgeBaseFormState) {
 
 async function getKnowledgeBase(knowledgeBaseId: number) {
   return apiJsonRequest<KnowledgeBaseDetail>(`/api/knowledge-bases/${knowledgeBaseId}`);
+}
+
+async function getKnowledgeBaseCoverage(knowledgeBaseId: number) {
+  return apiJsonRequest<KnowledgeBaseCoverage>(`/api/knowledge-bases/${knowledgeBaseId}/coverage`);
+}
+
+async function compareKnowledgeBase(knowledgeBaseId: number, question: string) {
+  return apiJsonRequest<KnowledgeBaseCompareReport>(`/api/knowledge-bases/${knowledgeBaseId}/compare`, {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
 }
 
 async function addKnowledgeBaseVideo(knowledgeBaseId: number, videoId: number) {
@@ -752,6 +1013,25 @@ async function activateLlmProvider(providerId: number) {
   });
 }
 
+async function rotateLlmProvider(providerId: number, apiKey: string) {
+  return apiJsonRequest<LlmProvider>(`/api/llm/providers/${providerId}/rotate`, {
+    method: "POST",
+    body: JSON.stringify({ apiKey }),
+  });
+}
+
+async function disableLlmProvider(providerId: number) {
+  return apiJsonRequest<LlmProvider>(`/api/llm/providers/${providerId}/disable`, {
+    method: "POST",
+  });
+}
+
+async function deleteLlmProvider(providerId: number) {
+  return apiEmptyRequest(`/api/llm/providers/${providerId}`, {
+    method: "DELETE",
+  });
+}
+
 async function testLlmConnection() {
   return apiJsonRequest<LlmTestResponse>("/api/llm/test", {
     method: "POST",
@@ -775,8 +1055,69 @@ async function activateEmbeddingProvider(providerId: number) {
   });
 }
 
+async function rotateEmbeddingProvider(providerId: number, apiKey: string) {
+  return apiJsonRequest<EmbeddingProvider>(`/api/embedding/providers/${providerId}/rotate`, {
+    method: "POST",
+    body: JSON.stringify({ apiKey }),
+  });
+}
+
+async function disableEmbeddingProvider(providerId: number) {
+  return apiJsonRequest<EmbeddingProvider>(`/api/embedding/providers/${providerId}/disable`, {
+    method: "POST",
+  });
+}
+
+async function deleteEmbeddingProvider(providerId: number) {
+  return apiEmptyRequest(`/api/embedding/providers/${providerId}`, {
+    method: "DELETE",
+  });
+}
+
 async function testEmbeddingConnection() {
   return apiJsonRequest<EmbeddingTestResponse>("/api/embedding/test", {
+    method: "POST",
+  });
+}
+
+async function listRerankProviders() {
+  return apiJsonRequest<RerankProvider[]>("/api/rerank/providers");
+}
+
+async function saveRerankProvider(config: RerankFormState) {
+  return apiJsonRequest<RerankProvider>("/api/rerank/providers", {
+    method: "POST",
+    body: JSON.stringify(config),
+  });
+}
+
+async function activateRerankProvider(providerId: number) {
+  return apiJsonRequest<RerankProvider>(`/api/rerank/providers/${providerId}/activate`, {
+    method: "POST",
+  });
+}
+
+async function rotateRerankProvider(providerId: number, apiKey: string) {
+  return apiJsonRequest<RerankProvider>(`/api/rerank/providers/${providerId}/rotate`, {
+    method: "POST",
+    body: JSON.stringify({ apiKey }),
+  });
+}
+
+async function disableRerankProvider(providerId: number) {
+  return apiJsonRequest<RerankProvider>(`/api/rerank/providers/${providerId}/disable`, {
+    method: "POST",
+  });
+}
+
+async function deleteRerankProvider(providerId: number) {
+  return apiEmptyRequest(`/api/rerank/providers/${providerId}`, {
+    method: "DELETE",
+  });
+}
+
+async function testRerankConnection() {
+  return apiJsonRequest<RerankTestResponse>("/api/rerank/test", {
     method: "POST",
   });
 }
@@ -928,11 +1269,20 @@ function App() {
     description: "",
   });
   const [knowledgeBaseStatus, setKnowledgeBaseStatus] = useState("");
+  const [knowledgeBaseCoverage, setKnowledgeBaseCoverage] = useState<KnowledgeBaseCoverage | null>(null);
+  const [knowledgeBaseCompareReport, setKnowledgeBaseCompareReport] = useState<KnowledgeBaseCompareReport | null>(null);
   const [isSavingKnowledgeBase, setIsSavingKnowledgeBase] = useState(false);
+  const [isComparingKnowledgeBase, setIsComparingKnowledgeBase] = useState(false);
   const [pendingKnowledgeBaseVideoId, setPendingKnowledgeBaseVideoId] = useState<number | null>(null);
   const [transcriptSearchQuery, setTranscriptSearchQuery] = useState("");
   const [transcriptSearchResults, setTranscriptSearchResults] = useState<ApiTranscriptSegment[]>([]);
   const [isSearchingTranscripts, setIsSearchingTranscripts] = useState(false);
+  const [transcriptVersions, setTranscriptVersions] = useState<TranscriptVersion[]>([]);
+  const [transcriptVersionDetail, setTranscriptVersionDetail] = useState<TranscriptVersionDetail | null>(null);
+  const [transcriptEditStatus, setTranscriptEditStatus] = useState("");
+  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
+  const [inspectingTranscriptVersionId, setInspectingTranscriptVersionId] = useState<number | null>(null);
+  const [restoringTranscriptVersionId, setRestoringTranscriptVersionId] = useState<number | null>(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [llmProviders, setLlmProviders] = useState<LlmProvider[]>([]);
   const [llmForm, setLlmForm] = useState<LlmFormState>({
@@ -960,10 +1310,25 @@ function App() {
   const [isSavingEmbedding, setIsSavingEmbedding] = useState(false);
   const [isTestingEmbedding, setIsTestingEmbedding] = useState(false);
   const [activatingEmbeddingId, setActivatingEmbeddingId] = useState<number | null>(null);
+  const [rerankProviders, setRerankProviders] = useState<RerankProvider[]>([]);
+  const [rerankForm, setRerankForm] = useState<RerankFormState>({
+    providerName: "BGE Rerank",
+    mode: "bge",
+    apiKey: "",
+    baseUrl: "http://localhost:8000/v1",
+    endpoint: "/rerank",
+    model: "bge-reranker-v2-m3",
+    timeoutSeconds: 15,
+  });
+  const [rerankStatus, setRerankStatus] = useState("");
+  const [isSavingRerank, setIsSavingRerank] = useState(false);
+  const [isTestingRerank, setIsTestingRerank] = useState(false);
+  const [activatingRerankId, setActivatingRerankId] = useState<number | null>(null);
   const [diagnosticsTab, setDiagnosticsTab] = useState<DiagnosticsTab>("runtime");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [llmOpen, setLlmOpen] = useState(false);
   const [embeddingOpen, setEmbeddingOpen] = useState(false);
+  const [rerankOpen, setRerankOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceState>({
@@ -1002,6 +1367,7 @@ function App() {
     refreshVectorIndexInspect();
     refreshLlmConfig();
     refreshEmbeddingProviders();
+    refreshRerankProviders();
     refreshKnowledgeBases();
     refreshRuntimeStatus();
     refreshTermGlossary();
@@ -1016,6 +1382,16 @@ function App() {
       setOcrStatus("");
     }
   }, [workspace.video?.id, workspace.job?.status, workspace.transcripts.length]);
+
+  useEffect(() => {
+    if (workspace.video) {
+      refreshTranscriptVersions(workspace.video.id);
+    } else {
+      setTranscriptVersions([]);
+      setTranscriptVersionDetail(null);
+      setTranscriptEditStatus("");
+    }
+  }, [workspace.video?.id, workspace.transcripts.length]);
 
   useEffect(() => {
     if (!workspace.video || !workspace.job || workspace.job.status !== "RUNNING") {
@@ -1177,6 +1553,28 @@ function App() {
     }
   }
 
+  async function refreshRerankProviders() {
+    try {
+      const providers = await listRerankProviders();
+      setRerankProviders(providers);
+      const activeProvider = providers.find((provider) => provider.active);
+      if (activeProvider) {
+        setRerankForm((current) => ({
+          ...current,
+          providerName: activeProvider.providerName,
+          mode: activeProvider.mode,
+          apiKey: "",
+          baseUrl: activeProvider.baseUrl,
+          endpoint: activeProvider.endpoint,
+          model: activeProvider.model,
+          timeoutSeconds: activeProvider.timeoutSeconds,
+        }));
+      }
+    } catch (exception) {
+      setRerankStatus(exception instanceof Error ? exception.message : "Rerank provider load failed");
+    }
+  }
+
   async function refreshRuntimeStatus() {
     try {
       setRuntimeStatus(await getRuntimeStatus());
@@ -1230,6 +1628,30 @@ function App() {
     }
   }
 
+  async function refreshTranscriptVersions(videoId = workspace.video?.id) {
+    if (!videoId) {
+      setTranscriptVersions([]);
+      return;
+    }
+    try {
+      setTranscriptVersions(await listTranscriptVersions(videoId));
+    } catch (exception) {
+      setTranscriptEditStatus(exception instanceof Error ? exception.message : "Transcript versions load failed");
+    }
+  }
+
+  async function refreshKnowledgeBaseCoverage(knowledgeBaseId = activeKnowledgeBaseId) {
+    if (!knowledgeBaseId) {
+      setKnowledgeBaseCoverage(null);
+      return;
+    }
+    try {
+      setKnowledgeBaseCoverage(await getKnowledgeBaseCoverage(knowledgeBaseId));
+    } catch (exception) {
+      setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库覆盖统计加载失败");
+    }
+  }
+
   async function refreshTermGlossary() {
     try {
       setTermGlossary(await listTermGlossary());
@@ -1245,9 +1667,16 @@ function App() {
       const resolvedId = nextActiveId ?? bases[0]?.id ?? null;
       setActiveKnowledgeBaseId(resolvedId);
       if (resolvedId) {
-        setActiveKnowledgeBaseDetail(await getKnowledgeBase(resolvedId));
+        const [detail, coverage] = await Promise.all([
+          getKnowledgeBase(resolvedId),
+          getKnowledgeBaseCoverage(resolvedId),
+        ]);
+        setActiveKnowledgeBaseDetail(detail);
+        setKnowledgeBaseCoverage(coverage);
       } else {
         setActiveKnowledgeBaseDetail(null);
+        setKnowledgeBaseCoverage(null);
+        setKnowledgeBaseCompareReport(null);
       }
     } catch (exception) {
       setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库加载失败");
@@ -1504,6 +1933,56 @@ function App() {
     }
   }
 
+  async function handleRotateLlmProvider(providerId: number) {
+    if (!llmForm.apiKey.trim()) {
+      setLlmStatus("Enter a new API Key before rotating.");
+      return;
+    }
+    setActivatingLlmId(providerId);
+    setLlmStatus("");
+    try {
+      await rotateLlmProvider(providerId, llmForm.apiKey.trim());
+      setLlmForm((current) => ({ ...current, apiKey: "" }));
+      await refreshLlmConfig();
+      await refreshRuntimeStatus();
+      setLlmStatus("LLM API Key rotated and encrypted.");
+    } catch (exception) {
+      setLlmStatus(exception instanceof Error ? exception.message : "LLM key rotation failed");
+    } finally {
+      setActivatingLlmId(null);
+    }
+  }
+
+  async function handleDisableLlmProvider(providerId: number) {
+    setActivatingLlmId(providerId);
+    setLlmStatus("");
+    try {
+      await disableLlmProvider(providerId);
+      await refreshLlmConfig();
+      await refreshRuntimeStatus();
+      setLlmStatus("LLM Provider disabled.");
+    } catch (exception) {
+      setLlmStatus(exception instanceof Error ? exception.message : "LLM Provider disable failed");
+    } finally {
+      setActivatingLlmId(null);
+    }
+  }
+
+  async function handleDeleteLlmProvider(providerId: number) {
+    setActivatingLlmId(providerId);
+    setLlmStatus("");
+    try {
+      await deleteLlmProvider(providerId);
+      await refreshLlmConfig();
+      await refreshRuntimeStatus();
+      setLlmStatus("LLM Provider deleted.");
+    } catch (exception) {
+      setLlmStatus(exception instanceof Error ? exception.message : "LLM Provider delete failed");
+    } finally {
+      setActivatingLlmId(null);
+    }
+  }
+
   function handleEmbeddingModeChange(mode: EmbeddingMode) {
     const defaults = embeddingDefaults[mode];
     setEmbeddingForm((current) => ({
@@ -1567,6 +2046,151 @@ function App() {
     }
   }
 
+  async function handleRotateEmbeddingProvider(providerId: number) {
+    if (embeddingForm.mode !== "bge" && !embeddingForm.apiKey.trim()) {
+      setEmbeddingStatus("Enter a new API Key before rotating.");
+      return;
+    }
+    setActivatingEmbeddingId(providerId);
+    setEmbeddingStatus("");
+    try {
+      await rotateEmbeddingProvider(providerId, embeddingForm.apiKey.trim());
+      setEmbeddingForm((current) => ({ ...current, apiKey: "" }));
+      await refreshEmbeddingProviders();
+      await refreshRuntimeStatus();
+      await refreshVectorIndexInspect();
+      setEmbeddingStatus("Embedding API Key rotated and encrypted. Rebuild vector index if model changed.");
+    } catch (exception) {
+      setEmbeddingStatus(exception instanceof Error ? exception.message : "Embedding key rotation failed");
+    } finally {
+      setActivatingEmbeddingId(null);
+    }
+  }
+
+  async function handleDisableEmbeddingProvider(providerId: number) {
+    setActivatingEmbeddingId(providerId);
+    setEmbeddingStatus("");
+    try {
+      await disableEmbeddingProvider(providerId);
+      await refreshEmbeddingProviders();
+      await refreshRuntimeStatus();
+      setEmbeddingStatus("Embedding Provider disabled; local fallback will be used.");
+    } catch (exception) {
+      setEmbeddingStatus(exception instanceof Error ? exception.message : "Embedding Provider disable failed");
+    } finally {
+      setActivatingEmbeddingId(null);
+    }
+  }
+
+  async function handleDeleteEmbeddingProvider(providerId: number) {
+    setActivatingEmbeddingId(providerId);
+    setEmbeddingStatus("");
+    try {
+      await deleteEmbeddingProvider(providerId);
+      await refreshEmbeddingProviders();
+      await refreshRuntimeStatus();
+      setEmbeddingStatus("Embedding Provider deleted.");
+    } catch (exception) {
+      setEmbeddingStatus(exception instanceof Error ? exception.message : "Embedding Provider delete failed");
+    } finally {
+      setActivatingEmbeddingId(null);
+    }
+  }
+
+  async function handleSaveRerankProvider() {
+    setIsSavingRerank(true);
+    setRerankStatus("");
+    try {
+      await saveRerankProvider({
+        ...rerankForm,
+        timeoutSeconds: Number(rerankForm.timeoutSeconds) || 15,
+      });
+      await refreshRerankProviders();
+      await refreshRuntimeStatus();
+      setRerankStatus("Rerank Provider saved, encrypted and enabled.");
+    } catch (exception) {
+      setRerankStatus(exception instanceof Error ? exception.message : "Rerank Provider save failed");
+    } finally {
+      setIsSavingRerank(false);
+    }
+  }
+
+  async function handleTestRerankConnection() {
+    setIsTestingRerank(true);
+    setRerankStatus("");
+    try {
+      const result = await testRerankConnection();
+      setRerankStatus(`${result.success ? "Connection OK" : "Connection failed"}: ${result.message}`);
+      await refreshRerankProviders();
+      await refreshRuntimeStatus();
+    } catch (exception) {
+      setRerankStatus(exception instanceof Error ? exception.message : "Rerank connection test failed");
+    } finally {
+      setIsTestingRerank(false);
+    }
+  }
+
+  async function handleActivateRerankProvider(providerId: number) {
+    setActivatingRerankId(providerId);
+    setRerankStatus("");
+    try {
+      await activateRerankProvider(providerId);
+      await refreshRerankProviders();
+      await refreshRuntimeStatus();
+      setRerankStatus("Rerank Provider enabled.");
+    } catch (exception) {
+      setRerankStatus(exception instanceof Error ? exception.message : "Rerank Provider enable failed");
+    } finally {
+      setActivatingRerankId(null);
+    }
+  }
+
+  async function handleRotateRerankProvider(providerId: number) {
+    setActivatingRerankId(providerId);
+    setRerankStatus("");
+    try {
+      await rotateRerankProvider(providerId, rerankForm.apiKey.trim());
+      setRerankForm((current) => ({ ...current, apiKey: "" }));
+      await refreshRerankProviders();
+      await refreshRuntimeStatus();
+      setRerankStatus("Rerank API Key rotated and encrypted.");
+    } catch (exception) {
+      setRerankStatus(exception instanceof Error ? exception.message : "Rerank key rotation failed");
+    } finally {
+      setActivatingRerankId(null);
+    }
+  }
+
+  async function handleDisableRerankProvider(providerId: number) {
+    setActivatingRerankId(providerId);
+    setRerankStatus("");
+    try {
+      await disableRerankProvider(providerId);
+      await refreshRerankProviders();
+      await refreshRuntimeStatus();
+      setRerankStatus("Rerank Provider disabled; local rerank will be used.");
+    } catch (exception) {
+      setRerankStatus(exception instanceof Error ? exception.message : "Rerank Provider disable failed");
+    } finally {
+      setActivatingRerankId(null);
+    }
+  }
+
+  async function handleDeleteRerankProvider(providerId: number) {
+    setActivatingRerankId(providerId);
+    setRerankStatus("");
+    try {
+      await deleteRerankProvider(providerId);
+      await refreshRerankProviders();
+      await refreshRuntimeStatus();
+      setRerankStatus("Rerank Provider deleted.");
+    } catch (exception) {
+      setRerankStatus(exception instanceof Error ? exception.message : "Rerank Provider delete failed");
+    } finally {
+      setActivatingRerankId(null);
+    }
+  }
+
   async function handleCreateKnowledgeBase() {
     setIsSavingKnowledgeBase(true);
     setKnowledgeBaseStatus("");
@@ -1586,8 +2210,14 @@ function App() {
   async function handleSelectKnowledgeBase(knowledgeBaseId: number) {
     setActiveKnowledgeBaseId(knowledgeBaseId);
     setKnowledgeBaseStatus("");
+    setKnowledgeBaseCompareReport(null);
     try {
-      setActiveKnowledgeBaseDetail(await getKnowledgeBase(knowledgeBaseId));
+      const [detail, coverage] = await Promise.all([
+        getKnowledgeBase(knowledgeBaseId),
+        getKnowledgeBaseCoverage(knowledgeBaseId),
+      ]);
+      setActiveKnowledgeBaseDetail(detail);
+      setKnowledgeBaseCoverage(coverage);
     } catch (exception) {
       setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库详情加载失败");
     }
@@ -1599,7 +2229,9 @@ function App() {
     setKnowledgeBaseStatus("");
     try {
       setActiveKnowledgeBaseDetail(await addKnowledgeBaseVideo(activeKnowledgeBaseId, videoId));
+      await refreshKnowledgeBaseCoverage(activeKnowledgeBaseId);
       await refreshKnowledgeBases(activeKnowledgeBaseId);
+      setKnowledgeBaseCompareReport(null);
       setKnowledgeBaseStatus("视频已加入知识库");
     } catch (exception) {
       setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "加入知识库失败");
@@ -1614,7 +2246,9 @@ function App() {
     setKnowledgeBaseStatus("");
     try {
       setActiveKnowledgeBaseDetail(await removeKnowledgeBaseVideo(activeKnowledgeBaseId, videoId));
+      await refreshKnowledgeBaseCoverage(activeKnowledgeBaseId);
       await refreshKnowledgeBases(activeKnowledgeBaseId);
+      setKnowledgeBaseCompareReport(null);
       setKnowledgeBaseStatus("视频已移出知识库");
     } catch (exception) {
       setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "移出知识库失败");
@@ -1630,10 +2264,30 @@ function App() {
       await deleteKnowledgeBase(activeKnowledgeBaseId);
       setActiveKnowledgeBaseId(null);
       setActiveKnowledgeBaseDetail(null);
+      setKnowledgeBaseCoverage(null);
+      setKnowledgeBaseCompareReport(null);
       await refreshKnowledgeBases(null);
       setKnowledgeBaseStatus("知识库已删除");
     } catch (exception) {
       setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库删除失败");
+    }
+  }
+
+  async function handleCompareKnowledgeBase() {
+    if (!activeKnowledgeBaseId) return;
+    setIsComparingKnowledgeBase(true);
+    setKnowledgeBaseStatus("");
+    try {
+      const report = await compareKnowledgeBase(
+        activeKnowledgeBaseId,
+        query.trim() || "对比多个视频的核心观点差异",
+      );
+      setKnowledgeBaseCompareReport(report);
+      setKnowledgeBaseStatus(`已完成 ${report.videoCount} 个视频的观点对比`);
+    } catch (exception) {
+      setKnowledgeBaseStatus(exception instanceof Error ? exception.message : "知识库观点对比失败");
+    } finally {
+      setIsComparingKnowledgeBase(false);
     }
   }
 
@@ -1947,6 +2601,76 @@ function App() {
     }
   }
 
+  async function handleInspectTranscriptVersion(versionId: number) {
+    if (!workspace.video) return;
+    setInspectingTranscriptVersionId(versionId);
+    setTranscriptEditStatus("");
+    try {
+      setTranscriptVersionDetail(await getTranscriptVersionDetail(workspace.video.id, versionId));
+    } catch (exception) {
+      setTranscriptEditStatus(exception instanceof Error ? exception.message : "Transcript version detail failed");
+    } finally {
+      setInspectingTranscriptVersionId(null);
+    }
+  }
+
+  async function handleSaveTranscriptEdit(segmentId: number, content: string) {
+    if (!workspace.video) return;
+    setIsSavingTranscript(true);
+    setTranscriptEditStatus("");
+    try {
+      const detail = await editTranscriptSegment(workspace.video.id, segmentId, content);
+      setWorkspace((current) => ({
+        ...current,
+        video: detail.video,
+        job: detail.job,
+        transcripts: detail.transcripts,
+        summaries: detail.summaries,
+      }));
+      const nextIndex = detail.transcripts.findIndex((segment) => segment.id === segmentId);
+      if (nextIndex >= 0) {
+        setActiveSegment(nextIndex);
+      }
+      resetTranscriptSearch();
+      await refreshTranscriptVersions(detail.video.id);
+      setTranscriptVersionDetail(null);
+      await refreshAsrDiagnostic(detail.video.id);
+      await refreshVectorIndexInspect();
+      setTranscriptEditStatus("字幕已保存，结构化总结和向量索引已回流更新。");
+    } catch (exception) {
+      setTranscriptEditStatus(exception instanceof Error ? exception.message : "Transcript update failed");
+    } finally {
+      setIsSavingTranscript(false);
+    }
+  }
+
+  async function handleRestoreTranscriptVersion(versionId: number) {
+    if (!workspace.video) return;
+    setRestoringTranscriptVersionId(versionId);
+    setTranscriptEditStatus("");
+    try {
+      const detail = await restoreTranscriptVersion(workspace.video.id, versionId);
+      setWorkspace((current) => ({
+        ...current,
+        video: detail.video,
+        job: detail.job,
+        transcripts: detail.transcripts,
+        summaries: detail.summaries,
+      }));
+      setActiveSegment(0);
+      resetTranscriptSearch();
+      await refreshTranscriptVersions(detail.video.id);
+      setTranscriptVersionDetail(null);
+      await refreshAsrDiagnostic(detail.video.id);
+      await refreshVectorIndexInspect();
+      setTranscriptEditStatus("字幕版本已恢复，知识库问答会使用回滚后的字幕。");
+    } catch (exception) {
+      setTranscriptEditStatus(exception instanceof Error ? exception.message : "Transcript restore failed");
+    } finally {
+      setRestoringTranscriptVersionId(null);
+    }
+  }
+
   async function handleClearAgentMessages() {
     if (!workspace.video) return;
     setError("");
@@ -2004,14 +2728,23 @@ function App() {
           />
           <TranscriptPanel
             activeSegment={activeSegment}
+            editStatus={transcriptEditStatus}
+            inspectingVersionId={inspectingTranscriptVersionId}
+            isSavingEdit={isSavingTranscript}
+            onInspectVersion={handleInspectTranscriptVersion}
             onSelect={handleSelectTranscript}
+            onRestoreVersion={handleRestoreTranscriptVersion}
+            onSaveEdit={handleSaveTranscriptEdit}
             onSearch={handleTranscriptSearch}
             onSearchQueryChange={handleTranscriptSearchQueryChange}
             onSelectSearchResult={handleSelectSearchResult}
+            restoringVersionId={restoringTranscriptVersionId}
             searchQuery={transcriptSearchQuery}
             searchResults={transcriptSearchResults}
             searching={isSearchingTranscripts}
             transcripts={workspace.transcripts}
+            versionDetail={transcriptVersionDetail}
+            versions={transcriptVersions}
           />
         </section>
 
@@ -2023,28 +2756,41 @@ function App() {
             libraryOpen={libraryOpen}
             llmConfig={llmConfig}
             llmOpen={llmOpen}
+            rerankOpen={rerankOpen}
+            rerankProvider={runtimeStatus?.llm.rerankProvider}
             onDiagnosticsToggle={() => {
               setDiagnosticsOpen((current) => !current);
               setLlmOpen(false);
               setEmbeddingOpen(false);
+              setRerankOpen(false);
               setLibraryOpen(false);
             }}
             onEmbeddingToggle={() => {
               setEmbeddingOpen((current) => !current);
               setLlmOpen(false);
               setDiagnosticsOpen(false);
+              setRerankOpen(false);
               setLibraryOpen(false);
             }}
             onLibraryToggle={() => {
               setLibraryOpen((current) => !current);
               setLlmOpen(false);
               setEmbeddingOpen(false);
+              setRerankOpen(false);
               setDiagnosticsOpen(false);
             }}
             onLlmToggle={() => {
               setLlmOpen((current) => !current);
               setDiagnosticsOpen(false);
               setEmbeddingOpen(false);
+              setRerankOpen(false);
+              setLibraryOpen(false);
+            }}
+            onRerankToggle={() => {
+              setRerankOpen((current) => !current);
+              setLlmOpen(false);
+              setEmbeddingOpen(false);
+              setDiagnosticsOpen(false);
               setLibraryOpen(false);
             }}
             videosCount={videos.length}
@@ -2059,6 +2805,9 @@ function App() {
               onActivateProvider={handleActivateLlmProvider}
               onChange={setLlmForm}
               onClose={() => setLlmOpen(false)}
+              onDeleteProvider={handleDeleteLlmProvider}
+              onDisableProvider={handleDisableLlmProvider}
+              onRotateProvider={handleRotateLlmProvider}
               onSave={handleSaveLlmConfig}
               onTest={handleTestLlmConnection}
               providers={llmProviders}
@@ -2073,12 +2822,33 @@ function App() {
               onActivateProvider={handleActivateEmbeddingProvider}
               onChange={setEmbeddingForm}
               onClose={() => setEmbeddingOpen(false)}
+              onDeleteProvider={handleDeleteEmbeddingProvider}
+              onDisableProvider={handleDisableEmbeddingProvider}
               onModeChange={handleEmbeddingModeChange}
+              onRotateProvider={handleRotateEmbeddingProvider}
               onSave={handleSaveEmbeddingProvider}
               onTest={handleTestEmbeddingConnection}
               providers={embeddingProviders}
               runtimeStatus={runtimeStatus}
               status={embeddingStatus}
+            />
+          ) : rerankOpen ? (
+            <RerankConfigPanel
+              activatingProviderId={activatingRerankId}
+              form={rerankForm}
+              isSaving={isSavingRerank}
+              isTesting={isTestingRerank}
+              onActivateProvider={handleActivateRerankProvider}
+              onChange={setRerankForm}
+              onClose={() => setRerankOpen(false)}
+              onDeleteProvider={handleDeleteRerankProvider}
+              onDisableProvider={handleDisableRerankProvider}
+              onRotateProvider={handleRotateRerankProvider}
+              onSave={handleSaveRerankProvider}
+              onTest={handleTestRerankConnection}
+              providers={rerankProviders}
+              runtimeStatus={runtimeStatus}
+              status={rerankStatus}
             />
           ) : diagnosticsOpen ? (
             <DiagnosticsPanel
@@ -2156,7 +2926,10 @@ function App() {
                   activeKnowledgeBaseId={activeKnowledgeBaseId}
                   context={agentContext}
                   disabled={agentMode === "video" && !workspace.video}
+                  isComparingKnowledgeBase={isComparingKnowledgeBase}
                   isSavingKnowledgeBase={isSavingKnowledgeBase}
+                  knowledgeBaseCompareReport={knowledgeBaseCompareReport}
+                  knowledgeBaseCoverage={knowledgeBaseCoverage}
                   knowledgeBaseForm={knowledgeBaseForm}
                   knowledgeBases={knowledgeBases}
                   knowledgeBaseStatus={knowledgeBaseStatus}
@@ -2166,6 +2939,7 @@ function App() {
                   onAsk={handleAskAgent}
                   onClear={handleClearAgentMessages}
                   onCitationSelect={handleSelectCitation}
+                  onCompareKnowledgeBase={handleCompareKnowledgeBase}
                   onCreateKnowledgeBase={handleCreateKnowledgeBase}
                   onDeleteKnowledgeBase={handleDeleteKnowledgeBase}
                   onKnowledgeBaseFormChange={setKnowledgeBaseForm}
@@ -2181,7 +2955,7 @@ function App() {
               }
               onTabChange={setRightWorkspaceTab}
               summariesCount={workspace.summaries.length}
-              summary={<SummaryPanel summaries={workspace.summaries} />}
+              summary={<SummaryPanel summaries={workspace.summaries} videoId={workspace.video?.id ?? null} />}
             />
           )}
         </aside>
@@ -2320,6 +3094,7 @@ function DiagnosticsPanel({
         <div className="diagnostics-metrics" aria-label="诊断状态指标">
           <Metric icon={<Database size={16} />} label="MySQL 状态机" value="6 tables" />
           <Metric icon={<Zap size={16} />} label="Redis 钩子" value="7 keys" />
+          <Metric icon={<GitBranch size={16} />} label="RocketMQ 调度" value={runtimeStatus?.processing.mode ?? "local"} />
           <Metric icon={<Bot size={16} />} label="Agent 工具" value="3 tools" />
         </div>
         <div className="diagnostics-tabs" role="tablist" aria-label="诊断分类">
@@ -2643,10 +3418,13 @@ function HeaderActions({
   libraryOpen,
   llmConfig,
   llmOpen,
+  rerankOpen,
+  rerankProvider,
   onDiagnosticsToggle,
   onEmbeddingToggle,
   onLibraryToggle,
   onLlmToggle,
+  onRerankToggle,
   videosCount,
 }: {
   diagnosticsOpen: boolean;
@@ -2655,17 +3433,21 @@ function HeaderActions({
   libraryOpen: boolean;
   llmConfig: LlmConfig | null;
   llmOpen: boolean;
+  rerankOpen: boolean;
+  rerankProvider?: string;
   onDiagnosticsToggle: () => void;
   onEmbeddingToggle: () => void;
   onLibraryToggle: () => void;
   onLlmToggle: () => void;
+  onRerankToggle: () => void;
   videosCount: number;
 }) {
   const llmReady = Boolean(llmConfig?.enabled && llmConfig.configured);
   const embeddingReady = Boolean(embeddingProvider && !embeddingProvider.includes("local"));
+  const rerankReady = Boolean(rerankProvider && !rerankProvider.includes("local") && rerankProvider !== "rerank-disabled");
 
   return (
-    <div className="header-metrics" aria-label="绯荤粺鎸囨爣">
+    <div className="header-metrics" aria-label="系统指标">
       <HeaderLlmButton
         active={llmOpen}
         ready={llmReady}
@@ -2678,6 +3460,12 @@ function HeaderActions({
         ready={embeddingReady}
         onClick={onEmbeddingToggle}
       />
+      <HeaderRerankButton
+        active={rerankOpen}
+        provider={rerankProvider}
+        ready={rerankReady}
+        onClick={onRerankToggle}
+      />
       <HeaderDiagnosticsButton
         active={diagnosticsOpen}
         onClick={onDiagnosticsToggle}
@@ -2688,6 +3476,35 @@ function HeaderActions({
         onClick={onLibraryToggle}
       />
     </div>
+  );
+}
+
+function HeaderRerankButton({
+  active,
+  onClick,
+  provider,
+  ready,
+}: {
+  active: boolean;
+  onClick: () => void;
+  provider?: string;
+  ready: boolean;
+}) {
+  return (
+    <button
+      aria-expanded={active}
+      className={`metric top-popover-trigger llm-trigger ${active ? "active" : ""} ${ready ? "ready" : ""}`}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="metric-icon">
+        <Zap size={17} />
+      </span>
+      <span>
+        <strong>Rerank</strong>
+        <small>{ready ? provider ?? "remote" : "local fallback"}</small>
+      </span>
+    </button>
   );
 }
 
@@ -3018,6 +3835,9 @@ function LlmConfigPanel({
   onActivateProvider,
   onChange,
   onClose,
+  onDeleteProvider,
+  onDisableProvider,
+  onRotateProvider,
   onSave,
   onTest,
   providers,
@@ -3031,6 +3851,9 @@ function LlmConfigPanel({
   onActivateProvider: (providerId: number) => void;
   onChange: (next: LlmFormState) => void;
   onClose: () => void;
+  onDeleteProvider: (providerId: number) => void;
+  onDisableProvider: (providerId: number) => void;
+  onRotateProvider: (providerId: number) => void;
   onSave: () => void;
   onTest: () => void;
   providers: LlmProvider[];
@@ -3154,6 +3977,15 @@ function LlmConfigPanel({
                 >
                   {provider.active ? "当前" : activatingProviderId === provider.id ? "启用中" : "启用"}
                 </button>
+                <button disabled={activatingProviderId === provider.id} onClick={() => onRotateProvider(provider.id)} type="button">
+                  Rotate
+                </button>
+                <button disabled={!provider.enabled || activatingProviderId === provider.id} onClick={() => onDisableProvider(provider.id)} type="button">
+                  Disable
+                </button>
+                <button disabled={activatingProviderId === provider.id} onClick={() => onDeleteProvider(provider.id)} type="button">
+                  Delete
+                </button>
               </div>
               {provider.lastTestStatus && (
                 <em className={provider.lastTestStatus === "OK" ? "ok" : ""}>
@@ -3177,7 +4009,10 @@ function EmbeddingConfigPanel({
   onActivateProvider,
   onChange,
   onClose,
+  onDeleteProvider,
+  onDisableProvider,
   onModeChange,
+  onRotateProvider,
   onSave,
   onTest,
   providers,
@@ -3191,7 +4026,10 @@ function EmbeddingConfigPanel({
   onActivateProvider: (providerId: number) => void;
   onChange: (next: EmbeddingFormState) => void;
   onClose: () => void;
+  onDeleteProvider: (providerId: number) => void;
+  onDisableProvider: (providerId: number) => void;
   onModeChange: (mode: EmbeddingMode) => void;
+  onRotateProvider: (providerId: number) => void;
   onSave: () => void;
   onTest: () => void;
   providers: EmbeddingProvider[];
@@ -3322,6 +4160,15 @@ function EmbeddingConfigPanel({
                 >
                   {provider.active ? "当前" : activatingProviderId === provider.id ? "启用中" : "启用"}
                 </button>
+                <button disabled={activatingProviderId === provider.id} onClick={() => onRotateProvider(provider.id)} type="button">
+                  Rotate
+                </button>
+                <button disabled={!provider.enabled || activatingProviderId === provider.id} onClick={() => onDisableProvider(provider.id)} type="button">
+                  Disable
+                </button>
+                <button disabled={activatingProviderId === provider.id} onClick={() => onDeleteProvider(provider.id)} type="button">
+                  Delete
+                </button>
               </div>
               {provider.lastTestStatus && (
                 <em className={provider.lastTestStatus === "OK" ? "ok" : ""}>
@@ -3333,6 +4180,190 @@ function EmbeddingConfigPanel({
         )}
       </div>
       {status && <p className={`llm-status ${status.startsWith("连接成功") ? "success" : ""}`}>{status}</p>}
+    </section>
+  );
+}
+
+function RerankConfigPanel({
+  activatingProviderId,
+  form,
+  isSaving,
+  isTesting,
+  onActivateProvider,
+  onChange,
+  onClose,
+  onDeleteProvider,
+  onDisableProvider,
+  onRotateProvider,
+  onSave,
+  onTest,
+  providers,
+  runtimeStatus,
+  status,
+}: {
+  activatingProviderId: number | null;
+  form: RerankFormState;
+  isSaving: boolean;
+  isTesting: boolean;
+  onActivateProvider: (providerId: number) => void;
+  onChange: (next: RerankFormState) => void;
+  onClose: () => void;
+  onDeleteProvider: (providerId: number) => void;
+  onDisableProvider: (providerId: number) => void;
+  onRotateProvider: (providerId: number) => void;
+  onSave: () => void;
+  onTest: () => void;
+  providers: RerankProvider[];
+  runtimeStatus: RuntimeStatus | null;
+  status: string;
+}) {
+  const activeProvider = providers.find((provider) => provider.active);
+  const remoteReady = Boolean(runtimeStatus?.llm.rerankProvider && !runtimeStatus.llm.rerankProvider.includes("local"));
+  return (
+    <section className="panel llm-panel">
+      <div className="panel-title">
+        <Zap size={19} />
+        <h2>Rerank</h2>
+        <span className={`panel-count ${remoteReady ? "ready" : ""}`}>
+          {remoteReady ? runtimeStatus?.llm.rerankProvider : activeProvider ? "pending test" : "local fallback"}
+        </span>
+        <button className="llm-close" onClick={onClose} type="button">
+          Close
+        </button>
+      </div>
+      <div className="llm-switch-row embedding-mode-row">
+        {(["bge", "openai-compatible"] as RerankMode[]).map((mode) => (
+          <button
+            className={form.mode === mode ? "active" : ""}
+            key={mode}
+            onClick={() => onChange({
+              ...form,
+              mode,
+              providerName: mode === "bge" ? "BGE Rerank" : "Rerank Provider",
+              endpoint: form.endpoint || "/rerank",
+              model: form.model || "bge-reranker-v2-m3",
+            })}
+            type="button"
+          >
+            {mode === "bge" ? "BGE" : "OpenAI Compatible"}
+          </button>
+        ))}
+      </div>
+      <div className="llm-fields">
+        <label>
+          <span>Name</span>
+          <input
+            onChange={(event) => onChange({ ...form, providerName: event.currentTarget.value })}
+            placeholder="BGE Rerank"
+            value={form.providerName}
+          />
+        </label>
+        <label>
+          <span>Base URL</span>
+          <input
+            onChange={(event) => onChange({ ...form, baseUrl: event.currentTarget.value })}
+            placeholder="http://localhost:8000/v1"
+            value={form.baseUrl}
+          />
+        </label>
+        <label>
+          <span>Endpoint</span>
+          <input
+            onChange={(event) => onChange({ ...form, endpoint: event.currentTarget.value })}
+            placeholder="/rerank"
+            value={form.endpoint}
+          />
+        </label>
+        <label>
+          <span>Model</span>
+          <input
+            onChange={(event) => onChange({ ...form, model: event.currentTarget.value })}
+            placeholder="bge-reranker-v2-m3"
+            value={form.model}
+          />
+        </label>
+        <label>
+          <span>API Key</span>
+          <input
+            autoComplete="off"
+            onChange={(event) => onChange({ ...form, apiKey: event.currentTarget.value })}
+            placeholder="optional for local BGE"
+            type="password"
+            value={form.apiKey}
+          />
+        </label>
+        <label>
+          <span>Timeout</span>
+          <input
+            min={3}
+            max={120}
+            onChange={(event) => onChange({ ...form, timeoutSeconds: Number(event.currentTarget.value) })}
+            type="number"
+            value={form.timeoutSeconds}
+          />
+        </label>
+      </div>
+      <div className="llm-actions">
+        <button disabled={isSaving} onClick={onSave} type="button">
+          {isSaving ? "Saving" : "Save and enable"}
+        </button>
+        <button disabled={isTesting || !activeProvider} onClick={onTest} type="button">
+          {isTesting ? "Testing" : "Test rerank"}
+        </button>
+      </div>
+      <div className="runtime-grid embedding-runtime-grid">
+        <RuntimeCell
+          label="Runtime"
+          tone={remoteReady ? "done" : "warn"}
+          value={runtimeStatus?.llm.rerankProvider ?? "local-rerank"}
+          detail={runtimeStatus?.llm.rerankDiagnostic ?? "waiting"}
+        />
+      </div>
+      <div className="llm-provider-list" aria-label="Saved Rerank Provider">
+        {providers.length === 0 ? (
+          <div className="llm-provider-empty">No saved Rerank Provider</div>
+        ) : (
+          providers.map((provider) => (
+            <div className={`llm-provider-row ${provider.active ? "active" : ""}`} key={provider.id}>
+              <div>
+                <strong>{provider.providerName}</strong>
+                <span>{provider.mode} / {provider.model}</span>
+                <small>{provider.baseUrl}{provider.endpoint}</small>
+                {provider.lastTestMessage && (
+                  <small className="llm-test-detail" title={provider.lastTestMessage}>
+                    {provider.lastTestMessage}
+                  </small>
+                )}
+              </div>
+              <div className="llm-provider-side">
+                <small>{provider.apiKeyMasked || "no key"}</small>
+                <button
+                  disabled={provider.active || activatingProviderId === provider.id}
+                  onClick={() => onActivateProvider(provider.id)}
+                  type="button"
+                >
+                  {provider.active ? "Current" : activatingProviderId === provider.id ? "Enabling" : "Enable"}
+                </button>
+                <button disabled={activatingProviderId === provider.id} onClick={() => onRotateProvider(provider.id)} type="button">
+                  Rotate
+                </button>
+                <button disabled={!provider.enabled || activatingProviderId === provider.id} onClick={() => onDisableProvider(provider.id)} type="button">
+                  Disable
+                </button>
+                <button disabled={activatingProviderId === provider.id} onClick={() => onDeleteProvider(provider.id)} type="button">
+                  Delete
+                </button>
+              </div>
+              {provider.lastTestStatus && (
+                <em className={provider.lastTestStatus === "OK" ? "ok" : ""}>
+                  {provider.lastTestStatus}
+                </em>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+      {status && <p className={`llm-status ${status.includes("OK") ? "success" : ""}`}>{status}</p>}
     </section>
   );
 }
@@ -3372,6 +4403,18 @@ function RuntimeStatusPanel({
           tone={status?.redis.connected ? "done" : "warn"}
           value={status?.redis.connected ? "connected" : "not connected"}
           detail={`cache=${status?.redis.answerCacheMode ?? "-"} / memory=${status?.redis.shortTermMemoryMode ?? "-"}`}
+        />
+        <RuntimeCell
+          label="RocketMQ"
+          tone={status?.processing.connected ? "done" : "warn"}
+          value={status?.processing.connected ? status.processing.mode : "not connected"}
+          detail={`pending=${status?.processing.pendingEvents ?? 0} / consumed=${status?.processing.consumedEvents ?? 0} / dlq=${status?.processing.dlqEvents ?? 0}`}
+        />
+        <RuntimeCell
+          label="Trace"
+          tone={status?.observability.logFormat === "json" ? "done" : "warn"}
+          value={status?.observability.traceHeader ?? "X-Trace-Id"}
+          detail={`${status?.observability.logFormat ?? "text"} logs / ${status?.observability.hook ?? "waiting"}`}
         />
         <RuntimeCell
           label="DeepSeek Chat"
@@ -3704,6 +4747,12 @@ function AsrDiagnosticPanel({
             tone={diagnostic.asrJsonExists ? "done" : "warn"}
             value={diagnostic.asrJsonExists ? `${bytesToMb(diagnostic.asrJsonSizeBytes)} MB` : "missing"}
             detail={`${diagnostic.transcriptCount} transcript rows`}
+          />
+          <RuntimeCell
+            label="Auto OCR Fusion"
+            tone={diagnostic.ocrAutoFusionEnabled ? "done" : "warn"}
+            value={diagnostic.ocrAutoFusionEnabled ? "enabled" : "disabled"}
+            detail={`mode=${diagnostic.ocrAutoFusionMode || "conservative"}`}
           />
           <RuntimeCell
             label="Job"
@@ -4653,27 +5702,53 @@ function VideoPanel({
 
 function TranscriptPanel({
   activeSegment,
+  editStatus,
+  inspectingVersionId,
+  isSavingEdit,
+  onInspectVersion,
   onSelect,
+  onRestoreVersion,
+  onSaveEdit,
   onSearch,
   onSearchQueryChange,
   onSelectSearchResult,
+  restoringVersionId,
   searchQuery,
   searchResults,
   searching,
   transcripts,
+  versionDetail,
+  versions,
 }: {
   activeSegment: number;
+  editStatus: string;
+  inspectingVersionId: number | null;
+  isSavingEdit: boolean;
+  onInspectVersion: (versionId: number) => void;
   onSelect: (index: number) => void;
+  onRestoreVersion: (versionId: number) => void;
+  onSaveEdit: (segmentId: number, content: string) => void;
   onSearch: (keyword: string) => void;
   onSearchQueryChange: (keyword: string) => void;
   onSelectSearchResult: (segment: ApiTranscriptSegment) => void;
+  restoringVersionId: number | null;
   searchQuery: string;
   searchResults: ApiTranscriptSegment[];
   searching: boolean;
   transcripts: ApiTranscriptSegment[];
+  versionDetail: TranscriptVersionDetail | null;
+  versions: TranscriptVersion[];
 }) {
   const rows = transcripts.length ? transcripts : [fallbackTranscript];
   const canSearch = transcripts.length > 0;
+  const activeRow = transcripts[activeSegment] ?? null;
+  const [draft, setDraft] = useState(activeRow?.content ?? "");
+  useEffect(() => {
+    setDraft(activeRow?.content ?? "");
+  }, [activeRow?.id, activeRow?.content]);
+  const canEdit = Boolean(activeRow);
+  const dirty = Boolean(canEdit && draft.trim() && draft !== activeRow?.content);
+  const recentVersions = versions.slice(0, 4);
 
   return (
     <section className="panel transcript-panel">
@@ -4720,6 +5795,88 @@ function TranscriptPanel({
           ))}
         </div>
       )}
+      <div className="transcript-editor">
+        <div className="transcript-editor-head">
+          <span>
+            <PencilLine size={15} />
+            当前片段校正
+          </span>
+          <small>{activeRow ? `${formatTime(activeRow.startMs)}-${formatTime(activeRow.endMs)}` : "等待字幕"}</small>
+        </div>
+        <textarea
+          disabled={!canEdit || isSavingEdit}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="选择一条字幕后，可在这里人工修正 ASR/OCR 结果"
+          value={draft}
+        />
+        <button
+          className="transcript-save-button"
+          disabled={!dirty || isSavingEdit}
+          onClick={() => activeRow && onSaveEdit(activeRow.id, draft)}
+          type="button"
+        >
+          <Save size={15} />
+          {isSavingEdit ? "保存中" : "保存并回流"}
+        </button>
+        {editStatus && <p className="transcript-edit-status">{editStatus}</p>}
+      </div>
+      <div className="transcript-version-box">
+        <div className="transcript-version-head">
+          <span>
+            <History size={15} />
+            字幕版本
+          </span>
+          <small>{versions.length ? `${versions.length} 个回滚点` : "暂无版本"}</small>
+        </div>
+        {recentVersions.length ? (
+          <div className="transcript-version-list">
+            {recentVersions.map((version) => (
+              <div className="transcript-version-row" key={version.id}>
+                <div>
+                  <strong>v{version.versionNo} · {version.source}</strong>
+                  <span>{version.note || version.preview || "字幕快照"}</span>
+                  <small>{version.segmentCount} 条 · {new Date(version.createdAt).toLocaleString()}</small>
+                </div>
+                <span className="transcript-version-actions">
+                  <button
+                    disabled={inspectingVersionId === version.id}
+                    onClick={() => onInspectVersion(version.id)}
+                    title="查看该字幕版本差异"
+                    type="button"
+                  >
+                    <Search size={15} />
+                  </button>
+                  <button
+                    disabled={restoringVersionId === version.id}
+                    onClick={() => onRestoreVersion(version.id)}
+                    title="恢复该字幕版本"
+                    type="button"
+                  >
+                    <RotateCcw size={15} />
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="transcript-version-empty">手动编辑或 OCR 融合后会自动生成回滚点。</p>
+        )}
+        {versionDetail && (
+          <div className="transcript-version-detail">
+            <div>
+              <strong>v{versionDetail.versionNo} 差异</strong>
+              <small>{versionDetail.changedCount}/{versionDetail.segmentCount} 条发生变化</small>
+            </div>
+            {versionDetail.segments.filter((segment) => segment.changed).slice(0, 5).map((segment) => (
+              <button key={`${versionDetail.id}-${segment.segmentIndex}`} onClick={() => onSelect(segment.segmentIndex)} type="button">
+                <span>{formatTime(segment.startMs)}</span>
+                <del>{segment.content}</del>
+                <strong>{segment.currentContent || "当前版本已删除"}</strong>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="transcript-list">
         {rows.map((segment, index) => (
           <button
@@ -4781,15 +5938,27 @@ function RightWorkspacePanel({
   );
 }
 
-function SummaryPanel({ summaries }: { summaries: SummaryAsset[] }) {
+function SummaryPanel({ summaries, videoId }: { summaries: SummaryAsset[]; videoId: number | null }) {
   const [activeType, setActiveType] = useState("CORE_POINTS");
   const [generationStatus, setGenerationStatus] = useState("");
+  const [generatingFormat, setGeneratingFormat] = useState<ExportFormat | null>(null);
   const activeSummary = summaries.find((summary) => summary.type === activeType) ?? summaries[0];
   const activeItems = parseSummary(activeSummary);
   const activeTemplate = summaryTemplates.find((template) => template.type === activeType) ?? summaryTemplates[0];
 
-  function handleGenerateAsset() {
-    setGenerationStatus(`${activeTemplate.actionLabel}已准备，后续可接入大模型生成任务。`);
+  async function handleGenerateAsset(format: ExportFormat) {
+    if (!videoId || !activeSummary) return;
+    setGeneratingFormat(format);
+    setGenerationStatus(`正在调用 DeepSeek 扩写${activeTemplate.label}并生成 ${format}...`);
+    try {
+      const result = await downloadVideoExport(videoId, activeType, format);
+      const mode = result.mode === "deepseek" ? `DeepSeek · ${result.model}` : "本地结构化兜底";
+      setGenerationStatus(`${result.filename} 已生成并下载 · ${mode}`);
+    } catch (error) {
+      setGenerationStatus(error instanceof Error ? error.message : "导出失败");
+    } finally {
+      setGeneratingFormat(null);
+    }
   }
 
   return (
@@ -4830,10 +5999,25 @@ function SummaryPanel({ summaries }: { summaries: SummaryAsset[] }) {
           <p>点击上传后，这里会展示 /api/videos/:id/summaries 返回的总结资产。</p>
         )}
       </div>
-      <button className="text-button summary-generate-button" disabled={!activeSummary} onClick={handleGenerateAsset} type="button">
-        {activeTemplate.actionLabel}
-        <ArrowUpRight size={16} />
-      </button>
+      <div className="summary-export">
+        <div>
+          <strong>{activeTemplate.actionLabel}</strong>
+          <span>基于字幕与大纲扩写为可交付文件</span>
+        </div>
+        <div className="summary-export-actions">
+          {(["MARKDOWN", "DOCX", "PPTX"] as ExportFormat[]).map((format) => (
+            <button
+              disabled={!activeSummary || !videoId || generatingFormat !== null}
+              key={format}
+              onClick={() => handleGenerateAsset(format)}
+              type="button"
+            >
+              <Download size={15} />
+              {generatingFormat === format ? "生成中" : format === "MARKDOWN" ? "Markdown" : format}
+            </button>
+          ))}
+        </div>
+      </div>
       {generationStatus && <p className="summary-generation-status">{generationStatus}</p>}
     </section>
   );
@@ -4842,12 +6026,16 @@ function SummaryPanel({ summaries }: { summaries: SummaryAsset[] }) {
 function KnowledgeBaseManagerPanel({
   activeDetail,
   activeId,
+  compareReport,
+  coverage,
   form,
+  isComparing,
   isSaving,
   knowledgeBases,
   onAddVideo,
   onChangeForm,
-  onComparePrompt,
+  onCitationSelect,
+  onCompare,
   onCreate,
   onDelete,
   onRemoveVideo,
@@ -4858,12 +6046,16 @@ function KnowledgeBaseManagerPanel({
 }: {
   activeDetail: KnowledgeBaseDetail | null;
   activeId: number | null;
+  compareReport: KnowledgeBaseCompareReport | null;
+  coverage: KnowledgeBaseCoverage | null;
   form: KnowledgeBaseFormState;
+  isComparing: boolean;
   isSaving: boolean;
   knowledgeBases: KnowledgeBase[];
   onAddVideo: (videoId: number) => void;
   onChangeForm: (form: KnowledgeBaseFormState) => void;
-  onComparePrompt: () => void;
+  onCitationSelect: (citation: AgentCitation) => void;
+  onCompare: () => void;
   onCreate: () => void;
   onDelete: () => void;
   onRemoveVideo: (videoId: number) => void;
@@ -4882,13 +6074,21 @@ function KnowledgeBaseManagerPanel({
           <strong>知识库管理</strong>
           <small>{activeId ? `${activeCount} 个视频参与聚合问答` : "未选择时使用默认全量知识库"}</small>
         </div>
-        <button disabled={!activeId || activeCount < 2} onClick={onComparePrompt} type="button">
-          对比观点
+        <button disabled={!activeId || activeCount < 2 || isComparing} onClick={onCompare} type="button">
+          {isComparing ? "对比中" : "对比观点"}
         </button>
         <button className="danger" disabled={!activeId} onClick={onDelete} type="button">
           删除
         </button>
       </div>
+      {coverage && (
+        <div className="knowledge-coverage" aria-label="知识库覆盖统计">
+          <span><strong>{coverage.videoCount}</strong><small>视频</small></span>
+          <span><strong>{coverage.readyVideoCount}</strong><small>就绪</small></span>
+          <span><strong>{coverage.transcriptCount}</strong><small>字幕片段</small></span>
+          <span><strong>{formatTime(coverage.totalDurationMs)}</strong><small>总时长</small></span>
+        </div>
+      )}
       <div className="knowledge-create-row">
         <input
           aria-label="知识库名称"
@@ -4947,6 +6147,35 @@ function KnowledgeBaseManagerPanel({
           )}
         </div>
       )}
+      {compareReport && (
+        <div className="knowledge-compare-report">
+          <div className="knowledge-compare-head">
+            <strong>观点对比报告</strong>
+            <small>{compareReport.question}</small>
+          </div>
+          {compareReport.sharedThemes.length > 0 && (
+            <div className="knowledge-theme-list" aria-label="共享主题">
+              {compareReport.sharedThemes.map((theme) => <span key={theme}>{theme}</span>)}
+            </div>
+          )}
+          <div className="knowledge-viewpoints">
+            {compareReport.viewpoints.map((viewpoint) => (
+              <article key={viewpoint.videoId}>
+                <strong>{viewpoint.originalName}</strong>
+                <p>{viewpoint.viewpoint}</p>
+                <div>
+                  {viewpoint.citations.slice(0, 3).map((citation) => (
+                    <button key={`${citation.videoId}-${citation.startMs}-${citation.endMs}`} onClick={() => onCitationSelect(citation)} type="button">
+                      <Search size={13} />
+                      {formatTime(citation.startMs)}
+                    </button>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
       {status && <p className={`knowledge-status ${status.startsWith("已") || status.includes("已") ? "success" : ""}`}>{status}</p>}
     </div>
   );
@@ -4957,7 +6186,10 @@ function AgentPanel({
   activeKnowledgeBaseId,
   disabled,
   context,
+  isComparingKnowledgeBase,
   isSavingKnowledgeBase,
+  knowledgeBaseCompareReport,
+  knowledgeBaseCoverage,
   knowledgeBaseForm,
   knowledgeBases,
   knowledgeBaseStatus,
@@ -4966,6 +6198,7 @@ function AgentPanel({
   onAddVideoToKnowledgeBase,
   onClear,
   onCitationSelect,
+  onCompareKnowledgeBase,
   onCreateKnowledgeBase,
   onDeleteKnowledgeBase,
   onKnowledgeBaseFormChange,
@@ -4983,7 +6216,10 @@ function AgentPanel({
   activeKnowledgeBaseId: number | null;
   disabled: boolean;
   context: AgentContext | null;
+  isComparingKnowledgeBase: boolean;
   isSavingKnowledgeBase: boolean;
+  knowledgeBaseCompareReport: KnowledgeBaseCompareReport | null;
+  knowledgeBaseCoverage: KnowledgeBaseCoverage | null;
   knowledgeBaseForm: KnowledgeBaseFormState;
   knowledgeBases: KnowledgeBase[];
   knowledgeBaseStatus: string;
@@ -4992,6 +6228,7 @@ function AgentPanel({
   onAddVideoToKnowledgeBase: (videoId: number) => void;
   onClear: () => void;
   onCitationSelect: (citation: AgentCitation) => void;
+  onCompareKnowledgeBase: () => void;
   onCreateKnowledgeBase: () => void;
   onDeleteKnowledgeBase: () => void;
   onKnowledgeBaseFormChange: (form: KnowledgeBaseFormState) => void;
@@ -5043,12 +6280,16 @@ function AgentPanel({
         <KnowledgeBaseManagerPanel
           activeDetail={activeKnowledgeBaseDetail}
           activeId={activeKnowledgeBaseId}
+          compareReport={knowledgeBaseCompareReport}
+          coverage={knowledgeBaseCoverage}
           form={knowledgeBaseForm}
+          isComparing={isComparingKnowledgeBase}
           isSaving={isSavingKnowledgeBase}
           knowledgeBases={knowledgeBases}
           onAddVideo={onAddVideoToKnowledgeBase}
           onChangeForm={onKnowledgeBaseFormChange}
-          onComparePrompt={() => onQueryChange("对比这个知识库中多个视频的核心观点差异")}
+          onCitationSelect={onCitationSelect}
+          onCompare={onCompareKnowledgeBase}
           onCreate={onCreateKnowledgeBase}
           onDelete={onDeleteKnowledgeBase}
           onRemoveVideo={onRemoveVideoFromKnowledgeBase}

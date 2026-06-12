@@ -29,13 +29,13 @@ public class AgentRerankService {
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
-    private final boolean enabled;
-    private final String mode;
-    private final String baseUrl;
-    private final String endpoint;
-    private final String apiKey;
-    private final String model;
-    private final Duration timeout;
+    private volatile boolean enabled;
+    private volatile String mode;
+    private volatile String baseUrl;
+    private volatile String endpoint;
+    private volatile String apiKey;
+    private volatile String model;
+    private volatile Duration timeout;
     private volatile boolean lastRemoteSuccess;
     private volatile String lastFailure = "";
 
@@ -60,11 +60,31 @@ public class AgentRerankService {
         this.timeout = timeout;
     }
 
+    public synchronized void configure(
+            boolean enabled,
+            String mode,
+            String baseUrl,
+            String endpoint,
+            String apiKey,
+            String model,
+            int timeoutSeconds
+    ) {
+        this.enabled = enabled;
+        this.mode = normalizeMode(mode);
+        this.baseUrl = normalizeBaseUrl(baseUrl);
+        this.endpoint = normalizeEndpoint(endpoint);
+        this.apiKey = apiKey == null ? "" : apiKey.trim();
+        this.model = model == null || model.isBlank() ? "bge-reranker-v2-m3" : model.trim();
+        this.timeout = Duration.ofSeconds(Math.min(120, Math.max(3, timeoutSeconds)));
+        this.lastRemoteSuccess = false;
+        this.lastFailure = "";
+    }
+
     public List<RerankedCandidate> rerank(String query, List<RerankInput> inputs, int limit) {
         if (inputs.isEmpty()) {
             return List.of();
         }
-        if (enabled && "bge".equals(mode) && !baseUrl.isBlank()) {
+        if (remoteConfigured()) {
             List<RerankedCandidate> remote = remoteRerank(query, inputs, limit);
             if (!remote.isEmpty()) {
                 lastRemoteSuccess = true;
@@ -78,20 +98,27 @@ public class AgentRerankService {
 
     public String providerName() {
         if (lastRemoteSuccess) {
-            return "bge:" + model;
+            return mode + ":" + model;
         }
         return enabled ? "local-rerank" : "rerank-disabled";
     }
 
+    public boolean remoteActive() {
+        return lastRemoteSuccess;
+    }
+
     public String diagnostic() {
         if (lastRemoteSuccess) {
-            return "BGE rerank active: " + baseUrl + endpoint + ", model=" + model;
+            return "Remote rerank active: " + baseUrl + endpoint + ", mode=" + mode + ", model=" + model;
         }
         if (!enabled) {
             return "rerank disabled";
         }
-        if ("bge".equals(mode) && !lastFailure.isBlank()) {
-            return "BGE rerank unavailable: " + lastFailure + "; using local rerank";
+        if (!"local".equals(mode) && !lastFailure.isBlank()) {
+            return "Remote rerank unavailable: " + lastFailure + "; using local rerank";
+        }
+        if (!"local".equals(mode) && !baseUrl.isBlank()) {
+            return "Remote rerank configured but not proven yet: " + baseUrl + endpoint + ", model=" + model;
         }
         return "local rerank active";
     }
@@ -212,7 +239,10 @@ public class AgentRerankService {
 
     private String normalizeMode(String value) {
         String normalized = value == null ? "local" : value.trim().toLowerCase(Locale.ROOT);
-        return "bge".equals(normalized) ? "bge" : "local";
+        if (List.of("bge", "openai-compatible").contains(normalized)) {
+            return normalized;
+        }
+        return "local";
     }
 
     private String normalizeBaseUrl(String value) {
@@ -226,6 +256,10 @@ public class AgentRerankService {
     private String normalizeEndpoint(String value) {
         String normalized = value == null || value.isBlank() ? "/rerank" : value.trim();
         return normalized.startsWith("/") ? normalized : "/" + normalized;
+    }
+
+    private boolean remoteConfigured() {
+        return enabled && !"local".equals(mode) && !baseUrl.isBlank();
     }
 
     public record RerankInput(

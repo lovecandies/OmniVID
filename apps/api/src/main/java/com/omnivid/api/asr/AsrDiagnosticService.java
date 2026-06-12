@@ -33,6 +33,8 @@ public class AsrDiagnosticService {
     private final int beamSize;
     private final int bestOf;
     private final int maxLen;
+    private final boolean ocrAutoFusionEnabled;
+    private final String ocrAutoFusionMode;
 
     public AsrDiagnosticService(
             VideoRepository videos,
@@ -47,7 +49,9 @@ public class AsrDiagnosticService {
             @Value("${omnivid.asr.initial-prompt:}") String initialPrompt,
             @Value("${omnivid.asr.beam-size:5}") int beamSize,
             @Value("${omnivid.asr.best-of:5}") int bestOf,
-            @Value("${omnivid.asr.max-len:72}") int maxLen
+            @Value("${omnivid.asr.max-len:72}") int maxLen,
+            @Value("${omnivid.ocr.auto-fusion-enabled:true}") boolean ocrAutoFusionEnabled,
+            @Value("${omnivid.ocr.auto-fusion-mode:conservative}") String ocrAutoFusionMode
     ) {
         this.videos = videos;
         this.jobs = jobs;
@@ -63,6 +67,8 @@ public class AsrDiagnosticService {
         this.beamSize = beamSize;
         this.bestOf = bestOf;
         this.maxLen = maxLen;
+        this.ocrAutoFusionEnabled = ocrAutoFusionEnabled;
+        this.ocrAutoFusionMode = ocrAutoFusionMode;
     }
 
     public AsrDiagnosticResponse inspect(long videoId) {
@@ -102,7 +108,9 @@ public class AsrDiagnosticService {
                 job == null ? "-" : job.status(),
                 job == null ? "" : job.errorMessage(),
                 readTail(ffmpegLogPath),
-                readTail(asrLogPath)
+                readTail(asrLogPath),
+                ocrAutoFusionEnabled,
+                ocrAutoFusionMode
         );
     }
 

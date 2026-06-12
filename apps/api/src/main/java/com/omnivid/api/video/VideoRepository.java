@@ -90,6 +90,16 @@ public class VideoRepository {
                 .update();
     }
 
+    public void touchContentVersion(long id) {
+        jdbc.sql("""
+                UPDATE video_asset
+                SET updated_at = CURRENT_TIMESTAMP, version = version + 1
+                WHERE id = :id
+                """)
+                .param("id", id)
+                .update();
+    }
+
     private VideoAsset map(ResultSet rs, int rowNum) throws SQLException {
         return new VideoAsset(
                 rs.getLong("id"),

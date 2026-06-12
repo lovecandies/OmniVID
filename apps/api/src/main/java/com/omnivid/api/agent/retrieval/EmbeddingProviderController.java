@@ -1,6 +1,7 @@
 package com.omnivid.api.agent.retrieval;
 
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,6 +31,21 @@ public class EmbeddingProviderController {
     @PostMapping("/providers/{id}/activate")
     EmbeddingProviderResponse activateProvider(@PathVariable long id) {
         return providers.activate(id);
+    }
+
+    @PostMapping("/providers/{id}/rotate")
+    EmbeddingProviderResponse rotateProvider(@PathVariable long id, @RequestBody EmbeddingProviderRotateRequest request) {
+        return providers.rotateKey(id, request);
+    }
+
+    @PostMapping("/providers/{id}/disable")
+    EmbeddingProviderResponse disableProvider(@PathVariable long id) {
+        return providers.disable(id);
+    }
+
+    @DeleteMapping("/providers/{id}")
+    void deleteProvider(@PathVariable long id) {
+        providers.delete(id);
     }
 
     @PostMapping("/test")

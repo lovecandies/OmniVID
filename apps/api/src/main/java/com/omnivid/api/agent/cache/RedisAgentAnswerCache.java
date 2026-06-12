@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnivid.api.agent.AgentAskResponse;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -40,13 +41,35 @@ public class RedisAgentAnswerCache implements AgentAnswerCache {
     @Override
     public void put(String scope, String question, AgentAskResponse response) {
         try {
-            redis.opsForValue().set(key(scope, question), objectMapper.writeValueAsString(response.withCacheHit(false)), TTL);
+            String cacheKey = key(scope, question);
+            String indexKey = indexKey(scope);
+            redis.opsForValue().set(cacheKey, objectMapper.writeValueAsString(response.withCacheHit(false)), TTL);
+            redis.opsForSet().add(indexKey, cacheKey);
+            redis.expire(indexKey, TTL);
         } catch (JsonProcessingException ignored) {
             // Cache failure must not break Agent answers.
         }
     }
 
+    @Override
+    public void evictScope(String scope) {
+        String indexKey = indexKey(scope);
+        Set<String> keys = redis.opsForSet().members(indexKey);
+        if (keys != null && !keys.isEmpty()) {
+            redis.delete(keys);
+        }
+        redis.delete(indexKey);
+    }
+
     private String key(String scope, String question) {
-        return "omnivid:agent:semantic:" + scope + ":" + Integer.toHexString(question.trim().toLowerCase().hashCode());
+        return prefix(scope) + Integer.toHexString(question.trim().toLowerCase().hashCode());
+    }
+
+    private String prefix(String scope) {
+        return "omnivid:agent:semantic:" + scope + ":";
+    }
+
+    private String indexKey(String scope) {
+        return prefix(scope) + "_keys";
     }
 }

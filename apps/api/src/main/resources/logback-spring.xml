@@ -1,0 +1,42 @@
+<configuration>
+    <springProperty scope="context" name="serviceName" source="spring.application.name" defaultValue="omnivid-api"/>
+
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp>
+                    <timeZone>UTC</timeZone>
+                </timestamp>
+                <pattern>
+                    <pattern>
+                        {
+                          "level": "%level",
+                          "service": "${serviceName}",
+                          "thread": "%thread",
+                          "logger": "%logger{40}",
+                          "message": "%message",
+                          "traceId": "%X{traceId:-}",
+                          "method": "%X{method:-}",
+                          "path": "%X{path:-}",
+                          "status": "%X{status:-}",
+                          "durationMs": "%X{durationMs:-}",
+                          "videoId": "%X{videoId:-}",
+                          "jobId": "%X{jobId:-}",
+                          "eventId": "%X{eventId:-}"
+                        }
+                    </pattern>
+                </pattern>
+                <stackTrace>
+                    <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                        <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                        <maxLength>4096</maxLength>
+                    </throwableConverter>
+                </stackTrace>
+            </providers>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="JSON_CONSOLE"/>
+    </root>
+</configuration>

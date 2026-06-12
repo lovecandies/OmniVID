@@ -25,6 +25,8 @@ public record AsrDiagnosticResponse(
         String lastJobStatus,
         String lastJobError,
         String ffmpegLogTail,
-        String asrLogTail
+        String asrLogTail,
+        boolean ocrAutoFusionEnabled,
+        String ocrAutoFusionMode
 ) {
 }

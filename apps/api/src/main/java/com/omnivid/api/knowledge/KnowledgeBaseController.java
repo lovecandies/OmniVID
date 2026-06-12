@@ -33,6 +33,16 @@ public class KnowledgeBaseController {
         return service.detail(id);
     }
 
+    @GetMapping("/{id}/coverage")
+    KnowledgeBaseCoverageResponse coverage(@PathVariable long id) {
+        return service.coverage(id);
+    }
+
+    @PostMapping("/{id}/compare")
+    KnowledgeBaseCompareResponse compare(@PathVariable long id, @RequestBody KnowledgeBaseCompareRequest request) {
+        return service.compare(id, request);
+    }
+
     @DeleteMapping("/{id}")
     void delete(@PathVariable long id) {
         service.delete(id);

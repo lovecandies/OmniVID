@@ -98,6 +98,39 @@ public class LlmProviderRepository {
                 .update();
     }
 
+    public void updateKey(long id, String apiKeyEncoded, String apiKeyMasked) {
+        jdbc.sql("""
+                UPDATE llm_provider_config
+                SET api_key_encoded = :apiKeyEncoded,
+                    api_key_masked = :apiKeyMasked,
+                    enabled = TRUE,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :id
+                """)
+                .param("id", id)
+                .param("apiKeyEncoded", apiKeyEncoded)
+                .param("apiKeyMasked", apiKeyMasked)
+                .update();
+    }
+
+    public void disable(long id) {
+        jdbc.sql("""
+                UPDATE llm_provider_config
+                SET enabled = FALSE,
+                    active = FALSE,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :id
+                """)
+                .param("id", id)
+                .update();
+    }
+
+    public void delete(long id) {
+        jdbc.sql("DELETE FROM llm_provider_config WHERE id = :id")
+                .param("id", id)
+                .update();
+    }
+
     public void updateTestResult(long id, String status, String message) {
         jdbc.sql("""
                 UPDATE llm_provider_config

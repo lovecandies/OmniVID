@@ -104,6 +104,18 @@ public class KnowledgeBaseRepository {
                 .list();
     }
 
+    public List<Long> knowledgeBaseIdsByVideoId(long videoId) {
+        return jdbc.sql("""
+                SELECT knowledge_base_id
+                FROM knowledge_base_video
+                WHERE video_id = :videoId
+                ORDER BY knowledge_base_id ASC
+                """)
+                .param("videoId", videoId)
+                .query(Long.class)
+                .list();
+    }
+
     public List<VideoAsset> videos(long knowledgeBaseId) {
         return jdbc.sql("""
                 SELECT va.*

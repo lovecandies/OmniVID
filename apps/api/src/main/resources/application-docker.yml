@@ -17,6 +17,8 @@ spring:
       schema-locations: classpath:schema-mysql.sql
 
 omnivid:
+  processing:
+    mode: rocketmq
   dedupe-lock:
     mode: redis
   progress-cache:
@@ -30,6 +32,6 @@ omnivid:
   vector-store:
     mode: qdrant
     qdrant:
-      base-url: http://localhost:6333
-      collection: omnivid_transcript_segments
-      timeout: 5s
+      base-url: ${OMNIVID_QDRANT_URL:http://localhost:6333}
+      collection: ${OMNIVID_QDRANT_COLLECTION:omnivid_transcript_segments}
+      timeout: ${OMNIVID_QDRANT_TIMEOUT:5s}

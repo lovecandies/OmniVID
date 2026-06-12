@@ -1,8 +1,7 @@
 package com.omnivid.api.llm;
 
 import com.omnivid.api.common.ApiException;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
+import com.omnivid.api.security.ProviderSecretService;
 import java.util.List;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -13,10 +12,12 @@ import org.springframework.stereotype.Service;
 public class LlmProviderService {
     private final LlmProviderRepository providers;
     private final CloudLlmClient llm;
+    private final ProviderSecretService secrets;
 
-    public LlmProviderService(LlmProviderRepository providers, CloudLlmClient llm) {
+    public LlmProviderService(LlmProviderRepository providers, CloudLlmClient llm, ProviderSecretService secrets) {
         this.providers = providers;
         this.llm = llm;
+        this.secrets = secrets;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -41,7 +42,7 @@ public class LlmProviderService {
                 providerName,
                 baseUrl,
                 model,
-                encode(apiKey),
+                secrets.encrypt(apiKey),
                 mask(apiKey),
                 timeoutSeconds
         );
@@ -60,6 +61,37 @@ public class LlmProviderService {
         return LlmProviderResponse.from(active);
     }
 
+    public LlmProviderResponse rotateKey(long id, LlmProviderRotateRequest request) {
+        LlmProviderConfig provider = providers.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LLM provider not found"));
+        String apiKey = requireValue(request.apiKey(), "API Key is required");
+        providers.updateKey(provider.id(), secrets.encrypt(apiKey), mask(apiKey));
+        LlmProviderConfig updated = providers.findById(provider.id()).orElseThrow();
+        if (updated.active() && updated.enabled()) {
+            configureClient(updated);
+        }
+        return LlmProviderResponse.from(updated);
+    }
+
+    public LlmProviderResponse disable(long id) {
+        LlmProviderConfig provider = providers.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LLM provider not found"));
+        providers.disable(provider.id());
+        if (provider.active()) {
+            llm.configure(new CloudLlmConfigRequest(false, "", provider.baseUrl(), provider.model(), provider.timeoutSeconds()));
+        }
+        return LlmProviderResponse.from(providers.findById(provider.id()).orElseThrow());
+    }
+
+    public void delete(long id) {
+        LlmProviderConfig provider = providers.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LLM provider not found"));
+        providers.delete(provider.id());
+        if (provider.active()) {
+            llm.configure(new CloudLlmConfigRequest(false, "", provider.baseUrl(), provider.model(), provider.timeoutSeconds()));
+        }
+    }
+
     public void updateTestResult(String status, String message) {
         providers.findActive().ifPresent(provider -> providers.updateTestResult(provider.id(), status, message));
     }
@@ -67,7 +99,7 @@ public class LlmProviderService {
     private void configureClient(LlmProviderConfig provider) {
         llm.configure(new CloudLlmConfigRequest(
                 provider.enabled(),
-                decode(provider.apiKeyEncoded()),
+                secrets.decrypt(provider.apiKeyEncoded()),
                 provider.baseUrl(),
                 provider.model(),
                 provider.timeoutSeconds()
@@ -112,14 +144,6 @@ public class LlmProviderService {
             value = value.substring(0, value.length() - 1);
         }
         return value;
-    }
-
-    private String encode(String apiKey) {
-        return Base64.getEncoder().encodeToString(apiKey.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private String decode(String encoded) {
-        return new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
     }
 
     private String mask(String apiKey) {

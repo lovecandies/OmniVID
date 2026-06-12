@@ -4,6 +4,8 @@ import com.omnivid.api.agent.retrieval.AgentRerankService;
 import com.omnivid.api.agent.retrieval.TranscriptVectorSearch;
 import com.omnivid.api.llm.CloudLlmClient;
 import com.omnivid.api.llm.CloudLlmConfigResponse;
+import com.omnivid.api.job.mq.ProcessingMqStatusService;
+import com.omnivid.api.observability.TraceContext;
 import java.sql.Connection;
 import java.sql.SQLException;
 import javax.sql.DataSource;
@@ -25,6 +27,7 @@ public class RuntimeStatusController {
     private final CloudLlmClient llm;
     private final TranscriptVectorSearch vectorSearch;
     private final AgentRerankService rerankService;
+    private final ProcessingMqStatusService processingMqStatus;
     private final String dedupeLockMode;
     private final String progressCacheMode;
     private final String rateLimitMode;
@@ -38,6 +41,7 @@ public class RuntimeStatusController {
             CloudLlmClient llm,
             TranscriptVectorSearch vectorSearch,
             AgentRerankService rerankService,
+            ProcessingMqStatusService processingMqStatus,
             @Value("${omnivid.dedupe-lock.mode:local}") String dedupeLockMode,
             @Value("${omnivid.progress-cache.mode:local}") String progressCacheMode,
             @Value("${omnivid.agent-rate-limit.mode:local}") String rateLimitMode,
@@ -50,6 +54,7 @@ public class RuntimeStatusController {
         this.llm = llm;
         this.vectorSearch = vectorSearch;
         this.rerankService = rerankService;
+        this.processingMqStatus = processingMqStatus;
         this.dedupeLockMode = dedupeLockMode;
         this.progressCacheMode = progressCacheMode;
         this.rateLimitMode = rateLimitMode;
@@ -64,6 +69,8 @@ public class RuntimeStatusController {
                 profile(),
                 databaseStatus(),
                 redisStatus(),
+                processingMqStatus.status(),
+                observabilityStatus(),
                 new RuntimeStatusResponse.RuntimeLlmStatus(
                         llmStatus.enabled(),
                         llmStatus.configured(),
@@ -79,6 +86,15 @@ public class RuntimeStatusController {
                         rerankService.providerName(),
                         rerankService.diagnostic()
                 )
+        );
+    }
+
+    private RuntimeStatusResponse.RuntimeObservabilityStatus observabilityStatus() {
+        return new RuntimeStatusResponse.RuntimeObservabilityStatus(
+                "json",
+                TraceContext.TRACE_HEADER,
+                TraceContext.currentTraceId(),
+                "OncePerRequestFilter + MDC + RocketMQ event context"
         );
     }
 

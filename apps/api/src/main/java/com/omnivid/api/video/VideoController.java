@@ -4,7 +4,10 @@ import com.omnivid.api.summary.SummaryAsset;
 import com.omnivid.api.progress.ProgressSnapshot;
 import com.omnivid.api.storage.LocalVideoStorageService;
 import com.omnivid.api.storage.StoredVideoFile;
+import com.omnivid.api.transcript.TranscriptEditRequest;
 import com.omnivid.api.transcript.TranscriptSegment;
+import com.omnivid.api.transcript.TranscriptVersionDetailResponse;
+import com.omnivid.api.transcript.TranscriptVersionResponse;
 import jakarta.validation.Valid;
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -19,6 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.MediaTypeFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -149,6 +153,30 @@ public class VideoController {
     @GetMapping("/{videoId}/transcripts/search")
     List<TranscriptSegment> searchTranscripts(@PathVariable long videoId, @RequestParam("q") String keyword) {
         return service.searchTranscripts(videoId, keyword);
+    }
+
+    @GetMapping("/{videoId}/transcripts/versions")
+    List<TranscriptVersionResponse> transcriptVersions(@PathVariable long videoId) {
+        return service.transcriptVersions(videoId);
+    }
+
+    @GetMapping("/{videoId}/transcripts/versions/{versionId}")
+    TranscriptVersionDetailResponse transcriptVersionDetail(@PathVariable long videoId, @PathVariable long versionId) {
+        return service.transcriptVersionDetail(videoId, versionId);
+    }
+
+    @PatchMapping("/{videoId}/transcripts/{segmentId}")
+    VideoDetailResponse editTranscript(
+            @PathVariable long videoId,
+            @PathVariable long segmentId,
+            @Valid @RequestBody TranscriptEditRequest request
+    ) {
+        return service.editTranscriptSegment(videoId, segmentId, request);
+    }
+
+    @PostMapping("/{videoId}/transcripts/versions/{versionId}/restore")
+    VideoDetailResponse restoreTranscriptVersion(@PathVariable long videoId, @PathVariable long versionId) {
+        return service.restoreTranscriptVersion(videoId, versionId);
     }
 
     @GetMapping("/{videoId}/summaries")

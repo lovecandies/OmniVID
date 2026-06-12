@@ -3,6 +3,7 @@ package com.omnivid.api.transcript;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -96,6 +97,23 @@ public class TranscriptRepository {
                 .update();
     }
 
+    public int updateContentByVideoIdAndId(long videoId, long id, String content) {
+        String normalized = sanitizer.normalizeTranscript(content);
+        if (normalized.isBlank()) {
+            return 0;
+        }
+        return jdbc.sql("""
+                UPDATE transcript_segment
+                SET content = :content, token_count = :tokenCount
+                WHERE video_id = :videoId AND id = :id
+                """)
+                .param("videoId", videoId)
+                .param("id", id)
+                .param("content", normalized)
+                .param("tokenCount", tokenCount(normalized))
+                .update();
+    }
+
     public boolean existsByVideoId(long videoId) {
         Integer count = jdbc.sql("SELECT COUNT(*) FROM transcript_segment WHERE video_id = :videoId")
                 .param("videoId", videoId)
@@ -121,6 +139,17 @@ public class TranscriptRepository {
                 .param("videoId", videoId)
                 .query(this::map)
                 .list();
+    }
+
+    public Optional<TranscriptSegment> findByVideoIdAndId(long videoId, long id) {
+        return jdbc.sql("""
+                SELECT * FROM transcript_segment
+                WHERE video_id = :videoId AND id = :id
+                """)
+                .param("videoId", videoId)
+                .param("id", id)
+                .query(this::map)
+                .optional();
     }
 
     public List<TranscriptSegment> search(long videoId, String keyword) {

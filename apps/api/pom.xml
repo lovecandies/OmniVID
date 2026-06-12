@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>com.omnivid</groupId>
 	<artifactId>api</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>2.0.0</version>
 	<name>api</name>
 	<description>OmniVid career-oriented video AI backend</description>
 	<url/>
@@ -63,6 +63,21 @@
 			<groupId>com.github.houbb</groupId>
 			<artifactId>opencc4j</artifactId>
 			<version>1.13.1</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.rocketmq</groupId>
+			<artifactId>rocketmq-client</artifactId>
+			<version>5.3.2</version>
+		</dependency>
+		<dependency>
+			<groupId>net.logstash.logback</groupId>
+			<artifactId>logstash-logback-encoder</artifactId>
+			<version>8.0</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml</artifactId>
+			<version>5.4.1</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

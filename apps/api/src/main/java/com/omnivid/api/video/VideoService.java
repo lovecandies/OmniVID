@@ -1,6 +1,7 @@
 package com.omnivid.api.video;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnivid.api.common.ApiException;
 import com.omnivid.api.asr.BurnedSubtitleOcrService;
@@ -12,8 +13,13 @@ import com.omnivid.api.asr.TranscriptRepairResponse;
 import com.omnivid.api.asr.WhisperAsrService;
 import com.omnivid.api.dedupe.DedupeLock;
 import com.omnivid.api.dedupe.DedupeLockService;
+import com.omnivid.api.agent.cache.AgentAnswerCache;
+import com.omnivid.api.knowledge.KnowledgeBaseRepository;
 import com.omnivid.api.job.ProcessingJob;
 import com.omnivid.api.job.ProcessingJobRepository;
+import com.omnivid.api.job.mq.ProcessingCommand;
+import com.omnivid.api.job.mq.ProcessingDispatchService;
+import com.omnivid.api.observability.TraceContext;
 import com.omnivid.api.media.AudioExtractionResult;
 import com.omnivid.api.media.AudioExtractionException;
 import com.omnivid.api.media.FfmpegAudioExtractionService;
@@ -28,9 +34,16 @@ import com.omnivid.api.summary.CloudSummaryService;
 import com.omnivid.api.summary.SummaryAsset;
 import com.omnivid.api.summary.SummaryRepository;
 import com.omnivid.api.transcript.TranscriptDraft;
+import com.omnivid.api.transcript.TranscriptEditRequest;
 import com.omnivid.api.transcript.TranscriptContextRepairService;
 import com.omnivid.api.transcript.TranscriptRepository;
 import com.omnivid.api.transcript.TranscriptSegment;
+import com.omnivid.api.transcript.TranscriptSnapshotSegment;
+import com.omnivid.api.transcript.TranscriptVersion;
+import com.omnivid.api.transcript.TranscriptVersionDetailResponse;
+import com.omnivid.api.transcript.TranscriptVersionRepository;
+import com.omnivid.api.transcript.TranscriptVersionResponse;
+import com.omnivid.api.transcript.TranscriptVersionSegmentResponse;
 import com.omnivid.api.transcript.SubtitleTextSanitizer;
 import com.omnivid.api.transcript.TermGlossaryService;
 import java.time.Duration;
@@ -39,8 +52,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -55,6 +68,8 @@ public class VideoService {
     private final VideoRepository videos;
     private final ProcessingJobRepository jobs;
     private final TranscriptRepository transcripts;
+    private final TranscriptVersionRepository transcriptVersions;
+    private final KnowledgeBaseRepository knowledgeBases;
     private final SummaryRepository summaries;
     private final CloudSummaryService cloudSummaryService;
     private final DedupeLockService dedupeLocks;
@@ -64,17 +79,23 @@ public class VideoService {
     private final BurnedSubtitleOcrService burnedSubtitleOcr;
     private final LocalVideoStorageService storage;
     private final ObjectMapper objectMapper;
-    private final ThreadPoolTaskExecutor processingExecutor;
+    private final ProcessingDispatchService processingDispatch;
     private final ProgressCacheService progressCache;
+    private final AgentAnswerCache answerCache;
     private final TranscriptVectorSearch vectorSearch;
     private final TranscriptContextRepairService contextRepairService;
     private final SubtitleTextSanitizer sanitizer;
     private final TermGlossaryService termGlossary;
+    private final boolean ocrAutoFusionEnabled;
+    private final String ocrAutoFusionMode;
+    private final String processingMode;
 
     public VideoService(
             VideoRepository videos,
             ProcessingJobRepository jobs,
             TranscriptRepository transcripts,
+            TranscriptVersionRepository transcriptVersions,
+            KnowledgeBaseRepository knowledgeBases,
             SummaryRepository summaries,
             CloudSummaryService cloudSummaryService,
             DedupeLockService dedupeLocks,
@@ -84,16 +105,22 @@ public class VideoService {
             BurnedSubtitleOcrService burnedSubtitleOcr,
             LocalVideoStorageService storage,
             ObjectMapper objectMapper,
-            ThreadPoolTaskExecutor omnividProcessingExecutor,
+            ProcessingDispatchService processingDispatch,
             ProgressCacheService progressCache,
+            AgentAnswerCache answerCache,
             TranscriptVectorSearch vectorSearch,
             TranscriptContextRepairService contextRepairService,
             SubtitleTextSanitizer sanitizer,
-            TermGlossaryService termGlossary
+            TermGlossaryService termGlossary,
+            @Value("${omnivid.ocr.auto-fusion-enabled:true}") boolean ocrAutoFusionEnabled,
+            @Value("${omnivid.ocr.auto-fusion-mode:conservative}") String ocrAutoFusionMode,
+            @Value("${omnivid.processing.mode:local}") String processingMode
     ) {
         this.videos = videos;
         this.jobs = jobs;
         this.transcripts = transcripts;
+        this.transcriptVersions = transcriptVersions;
+        this.knowledgeBases = knowledgeBases;
         this.summaries = summaries;
         this.cloudSummaryService = cloudSummaryService;
         this.dedupeLocks = dedupeLocks;
@@ -103,12 +130,16 @@ public class VideoService {
         this.burnedSubtitleOcr = burnedSubtitleOcr;
         this.storage = storage;
         this.objectMapper = objectMapper;
-        this.processingExecutor = omnividProcessingExecutor;
+        this.processingDispatch = processingDispatch;
         this.progressCache = progressCache;
+        this.answerCache = answerCache;
         this.vectorSearch = vectorSearch;
         this.contextRepairService = contextRepairService;
         this.sanitizer = sanitizer;
         this.termGlossary = termGlossary;
+        this.ocrAutoFusionEnabled = ocrAutoFusionEnabled;
+        this.ocrAutoFusionMode = ocrAutoFusionMode == null ? "conservative" : ocrAutoFusionMode.trim().toLowerCase(Locale.ROOT);
+        this.processingMode = processingMode == null ? "local" : processingMode.trim().toLowerCase(Locale.ROOT);
     }
 
     @Transactional
@@ -133,6 +164,7 @@ public class VideoService {
         }
     }
 
+    @Transactional
     public CompleteUploadResponse completeStoredUpload(StoredVideoFile storedFile) {
         String md5 = storedFile.md5().toLowerCase();
         try (DedupeLock lock = dedupeLocks.tryLock(md5, Duration.ofSeconds(30))) {
@@ -147,7 +179,7 @@ public class VideoService {
             long durationMs = metadataProbe.durationMs(storedFile);
             CompleteUploadResponse response = createUploadJobWithLock(md5, storedFile.originalName(), storedFile.storagePath(), durationMs);
             if (!response.deduplicated()) {
-                processingExecutor.execute(() -> processStoredVideo(response.video().id(), response.job().id(), storedFile));
+                processingDispatch.dispatch(new ProcessingCommand(response.video().id(), response.job().id(), false));
             }
             return response;
         }
@@ -175,7 +207,7 @@ public class VideoService {
                 durationMs
         );
         ProcessingJob job = jobs.create(video.id());
-        String finalStep = "LOCAL_DAG_DONE";
+        String finalStep = finalProcessingStep();
         seedProcessingResult(video, job, finalStep, storedFile, null, null);
         return new CompleteUploadResponse(false, videos.findById(video.id()).orElseThrow(), jobs.findById(job.id()).orElseThrow());
     }
@@ -205,11 +237,21 @@ public class VideoService {
         return new CompleteUploadResponse(false, video, job);
     }
 
-    private void processStoredVideo(long videoId, long jobId, StoredVideoFile storedFile) {
-        processStoredVideo(videoId, jobId, storedFile, false);
+    public boolean runProcessingCommand(ProcessingCommand command) {
+        try (TraceContext.Scope ignored = TraceContext.open(command.traceId(), Map.of(
+                "videoId", command.videoId(),
+                "jobId", command.jobId()
+        ))) {
+            log.info("video_processing_started");
+            VideoAsset video = requireVideo(command.videoId());
+            StoredVideoFile storedFile = storage.loadStoredFile(video.storagePath(), video.originalName(), video.md5());
+            boolean completed = processStoredVideo(video.id(), command.jobId(), storedFile, command.replaceExistingTranscripts());
+            log.info(completed ? "video_processing_completed" : "video_processing_failed");
+            return completed;
+        }
     }
 
-    private void processStoredVideo(long videoId, long jobId, StoredVideoFile storedFile, boolean replaceExistingTranscripts) {
+    private boolean processStoredVideo(long videoId, long jobId, StoredVideoFile storedFile, boolean replaceExistingTranscripts) {
         VideoAsset video = videos.findById(videoId).orElseThrow();
         ProcessingJob job = jobs.findById(jobId).orElseThrow();
         AudioExtractionResult audioResult = null;
@@ -220,7 +262,8 @@ public class VideoService {
             if (replaceExistingTranscripts && (asrResult == null || asrResult.segments().isEmpty())) {
                 throw new AsrTranscriptionException("ASR produced no valid subtitles; existing subtitles were kept");
             }
-            seedProcessingResult(video, job, "SUMMARY_GENERATED_AND_LOCAL_DAG_DONE", storedFile, audioResult, asrResult, replaceExistingTranscripts);
+            seedProcessingResult(video, job, finalProcessingStep(), storedFile, audioResult, asrResult, replaceExistingTranscripts);
+            return true;
         } catch (AudioExtractionException exception) {
             failAudioExtraction(video, job, exception);
         } catch (AsrTranscriptionException exception) {
@@ -228,6 +271,7 @@ public class VideoService {
         } catch (RuntimeException exception) {
             failProcessing(video, job, exception);
         }
+        return false;
     }
 
     private AudioExtractionResult extractAudio(VideoAsset video, ProcessingJob job, StoredVideoFile storedFile) {
@@ -275,7 +319,7 @@ public class VideoService {
 
     private void failProcessing(VideoAsset video, ProcessingJob job, RuntimeException exception) {
         ProcessingJob current = jobs.findById(job.id()).orElseThrow();
-        jobs.fail(current.id(), current.version(), "LOCAL_DAG_FAILED", truncate(exception.getMessage()));
+        jobs.fail(current.id(), current.version(), processingFailureStep(), truncate(exception.getMessage()));
         videos.markFailed(video.id());
         cacheProgress(video.id(), jobs.findById(job.id()).orElseThrow());
     }
@@ -287,10 +331,21 @@ public class VideoService {
         return message.length() <= 1000 ? message : message.substring(0, 1000);
     }
 
+    private String finalProcessingStep() {
+        return "rocketmq".equals(processingMode)
+                ? "SUMMARY_GENERATED_AND_ROCKETMQ_DAG_DONE"
+                : "SUMMARY_GENERATED_AND_LOCAL_DAG_DONE";
+    }
+
+    private String processingFailureStep() {
+        return "rocketmq".equals(processingMode) ? "ROCKETMQ_DAG_FAILED" : "LOCAL_DAG_FAILED";
+    }
+
     public List<VideoAsset> listVideos() {
         return videos.list(DEMO_USER_ID);
     }
 
+    @Transactional
     public CompleteUploadResponse retryFailedVideo(long videoId) {
         VideoAsset video = requireVideo(videoId);
         ProcessingJob latestJob = jobs.findLatestByVideoId(videoId)
@@ -299,14 +354,15 @@ public class VideoService {
             throw retryNotAllowed(latestJob);
         }
 
-        StoredVideoFile storedFile = storage.loadStoredFile(video.storagePath(), video.originalName(), video.md5());
+        storage.loadStoredFile(video.storagePath(), video.originalName(), video.md5());
         videos.markProcessing(video.id());
         ProcessingJob retryJob = jobs.createRetry(video.id(), latestJob.retryCount() + 1);
         cacheProgress(video.id(), retryJob);
-        processingExecutor.execute(() -> processStoredVideo(video.id(), retryJob.id(), storedFile));
+        processingDispatch.dispatch(new ProcessingCommand(video.id(), retryJob.id(), false));
         return new CompleteUploadResponse(false, videos.findById(video.id()).orElseThrow(), retryJob);
     }
 
+    @Transactional
     public CompleteUploadResponse reprocessAsr(long videoId) {
         VideoAsset video = requireVideo(videoId);
         ProcessingJob latestJob = jobs.findLatestByVideoId(videoId).orElse(null);
@@ -319,11 +375,11 @@ public class VideoService {
             );
         }
 
-        StoredVideoFile storedFile = storage.loadStoredFile(video.storagePath(), video.originalName(), video.md5());
+        storage.loadStoredFile(video.storagePath(), video.originalName(), video.md5());
         videos.markProcessing(video.id());
         ProcessingJob reprocessJob = jobs.createAsrReprocess(video.id(), latestJob == null ? 0 : latestJob.retryCount() + 1);
         cacheProgress(video.id(), reprocessJob);
-        processingExecutor.execute(() -> processStoredVideo(video.id(), reprocessJob.id(), storedFile, true));
+        processingDispatch.dispatch(new ProcessingCommand(video.id(), reprocessJob.id(), true));
         return new CompleteUploadResponse(false, videos.findById(video.id()).orElseThrow(), reprocessJob);
     }
 
@@ -397,6 +453,17 @@ public class VideoService {
     }
 
     private OcrSubtitleQualityResponse applyOcrFusion(long videoId, BurnedSubtitleOcrService.FusionResult result) {
+        return applyOcrFusion(videoId, result, true);
+    }
+
+    private OcrSubtitleQualityResponse applyOcrFusion(
+            long videoId,
+            BurnedSubtitleOcrService.FusionResult result,
+            boolean rebuildDerivedAssets
+    ) {
+        if (!result.replacements().isEmpty()) {
+            saveTranscriptSnapshot(videoId, "OCR_FUSION", "Before " + result.quality().mode());
+        }
         int updated = 0;
         for (BurnedSubtitleOcrService.FusedSegment replacement : result.replacements()) {
             updated += transcripts.updateContentBySegmentIndex(
@@ -407,7 +474,7 @@ public class VideoService {
         }
         updated += normalizeTermsWithOcrEvidence(videoId, result.quality());
         updated += applyTermGlossary(videoId);
-        if (updated > 0) {
+        if (updated > 0 && rebuildDerivedAssets) {
             rebuildDerivedAssetsFromTranscripts(videoId);
         }
         return burnedSubtitleOcr.withAppliedReplacementCount(result.quality(), updated);
@@ -418,6 +485,17 @@ public class VideoService {
         VideoAsset video = videos.findById(videoId).orElseThrow();
         ensureSummaryAssetsFromTranscripts(video, transcripts.listByVideoId(videoId));
         indexVideoTranscripts(videoId);
+        evictAgentAnswerCache(videoId);
+    }
+
+    private void evictAgentAnswerCache(long videoId) {
+        List<String> scopes = new ArrayList<>();
+        scopes.add("video:" + videoId);
+        scopes.add("kb:default");
+        knowledgeBases.knowledgeBaseIdsByVideoId(videoId).stream()
+                .map(id -> "kb:" + id)
+                .forEach(scopes::add);
+        answerCache.evictScopes(scopes);
     }
 
     private int normalizeTermsWithOcrEvidence(long videoId, OcrSubtitleQualityResponse quality) {
@@ -513,6 +591,93 @@ public class VideoService {
         return transcripts.search(videoId, normalized);
     }
 
+    public List<TranscriptVersionResponse> transcriptVersions(long videoId) {
+        requireVideo(videoId);
+        return transcriptVersions.listByVideoId(videoId).stream()
+                .map(this::toVersionResponse)
+                .toList();
+    }
+
+    public TranscriptVersionDetailResponse transcriptVersionDetail(long videoId, long versionId) {
+        requireVideo(videoId);
+        TranscriptVersion version = transcriptVersions.findById(videoId, versionId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Transcript version not found"));
+        List<TranscriptSnapshotSegment> snapshot = readTranscriptSnapshot(version.snapshotJson());
+        Map<Integer, String> currentByIndex = transcripts.listByVideoId(videoId).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        TranscriptSegment::segmentIndex,
+                        TranscriptSegment::content,
+                        (left, right) -> left
+                ));
+        List<TranscriptVersionSegmentResponse> rows = snapshot.stream()
+                .limit(120)
+                .map(segment -> {
+                    String currentContent = currentByIndex.getOrDefault(segment.segmentIndex(), "");
+                    return new TranscriptVersionSegmentResponse(
+                            segment.segmentIndex(),
+                            segment.startMs(),
+                            segment.endMs(),
+                            segment.speaker(),
+                            segment.content(),
+                            currentContent,
+                            !segment.content().equals(currentContent)
+                    );
+                })
+                .toList();
+        int changedCount = (int) snapshot.stream()
+                .filter(segment -> !segment.content().equals(currentByIndex.getOrDefault(segment.segmentIndex(), "")))
+                .count();
+        return new TranscriptVersionDetailResponse(
+                version.id(),
+                version.videoId(),
+                version.versionNo(),
+                version.source(),
+                version.note(),
+                snapshot.size(),
+                changedCount,
+                version.createdAt(),
+                rows
+        );
+    }
+
+    public VideoDetailResponse editTranscriptSegment(long videoId, long segmentId, TranscriptEditRequest request) {
+        requireVideo(videoId);
+        TranscriptSegment segment = transcripts.findByVideoIdAndId(videoId, segmentId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Transcript segment not found"));
+        String nextContent = termGlossary.apply(request.content());
+        if (nextContent.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Transcript content cannot be blank");
+        }
+        if (nextContent.equals(segment.content())) {
+            return detail(videoId);
+        }
+
+        saveTranscriptSnapshot(videoId, "MANUAL_EDIT", "Before editing segment #" + segment.segmentIndex());
+        int updated = transcripts.updateContentByVideoIdAndId(videoId, segmentId, nextContent);
+        if (updated == 0) {
+            throw new ApiException(HttpStatus.CONFLICT, "Transcript segment update was not applied");
+        }
+        rebuildDerivedAssetsFromTranscripts(videoId);
+        videos.touchContentVersion(videoId);
+        return detail(videoId);
+    }
+
+    public VideoDetailResponse restoreTranscriptVersion(long videoId, long versionId) {
+        requireVideo(videoId);
+        TranscriptVersion version = transcriptVersions.findById(videoId, versionId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Transcript version not found"));
+        List<TranscriptSnapshotSegment> snapshot = readTranscriptSnapshot(version.snapshotJson());
+        if (snapshot.isEmpty()) {
+            throw new ApiException(HttpStatus.CONFLICT, "Transcript version snapshot is empty");
+        }
+
+        saveTranscriptSnapshot(videoId, "RESTORE_BACKUP", "Before restoring version v" + version.versionNo());
+        transcripts.replaceByVideoId(videoId, snapshot.stream().map(TranscriptSnapshotSegment::toDraft).toList());
+        rebuildDerivedAssetsFromTranscripts(videoId);
+        videos.touchContentVersion(videoId);
+        return detail(videoId);
+    }
+
     public List<SummaryAsset> summaries(long videoId) {
         VideoAsset video = requireVideo(videoId);
         ProcessingJob job = jobs.findLatestByVideoId(videoId)
@@ -577,20 +742,58 @@ public class VideoService {
             AsrTranscriptionResult asrResult,
             boolean replaceExistingTranscripts
     ) {
+        boolean transcriptsTouched = false;
         if (replaceExistingTranscripts) {
             transcripts.replaceByVideoId(video.id(), buildTranscript(video, storedFile, audioResult, asrResult));
             summaries.deleteByVideoId(video.id());
+            transcriptsTouched = true;
         } else if (!transcripts.existsByVideoId(video.id())) {
             transcripts.insertBatch(video.id(), buildTranscript(video, storedFile, audioResult, asrResult));
+            transcriptsTouched = true;
         }
-        indexVideoTranscripts(video.id());
 
-        ensureSummaryAssetsFromAsr(video, asrResult);
+        if (transcriptsTouched && hasRealAsrSegments(asrResult)) {
+            applyDefaultOcrFusion(video.id(), storedFile, asrResult);
+            rebuildDerivedAssetsFromTranscripts(video.id());
+        } else {
+            indexVideoTranscripts(video.id());
+            ensureSummaryAssetsFromAsr(video, asrResult);
+        }
 
         ProcessingJob current = jobs.findById(job.id()).orElseThrow();
         jobs.advance(current.id(), current.version(), finalStep, 100, "DONE");
         cacheProgress(video.id(), jobs.findById(job.id()).orElseThrow());
         videos.markReady(video.id());
+    }
+
+    private boolean hasRealAsrSegments(AsrTranscriptionResult asrResult) {
+        return asrResult != null && !asrResult.segments().isEmpty();
+    }
+
+    private void applyDefaultOcrFusion(long videoId, StoredVideoFile storedFile, AsrTranscriptionResult asrResult) {
+        if (!ocrAutoFusionEnabled || storedFile == null || !hasRealAsrSegments(asrResult)) {
+            return;
+        }
+        try {
+            BurnedSubtitleOcrService.FusionResult result = switch (ocrAutoFusionMode) {
+                case "align", "strong", "strong-visual" ->
+                        burnedSubtitleOcr.align(videoId, transcripts.listByVideoId(videoId), 512);
+                case "refine", "low-confidence" ->
+                        burnedSubtitleOcr.refineLowConfidence(videoId, transcripts.listByVideoId(videoId), 512);
+                default ->
+                        burnedSubtitleOcr.fuse(videoId, transcripts.listByVideoId(videoId), 64);
+            };
+            OcrSubtitleQualityResponse applied = applyOcrFusion(videoId, result, false);
+            log.info(
+                    "Default ASR+OCR fusion finished for video {} mode={} available={} applied={}",
+                    videoId,
+                    applied.mode(),
+                    applied.ocrAvailable(),
+                    applied.appliedReplacementCount()
+            );
+        } catch (RuntimeException exception) {
+            log.warn("Default ASR+OCR fusion skipped for video {}: {}", videoId, exception.getMessage());
+        }
     }
 
     private void indexVideoTranscripts(long videoId) {
@@ -829,6 +1032,62 @@ public class VideoService {
             hooks.add("后端链路：围绕上传、去重、抽音频、ASR、总结状态流转展开");
         }
         return hooks;
+    }
+
+    private void saveTranscriptSnapshot(long videoId, String source, String note) {
+        List<TranscriptSegment> current = transcripts.listByVideoId(videoId);
+        if (current.isEmpty()) {
+            return;
+        }
+        try {
+            List<TranscriptSnapshotSegment> snapshot = current.stream()
+                    .map(segment -> new TranscriptSnapshotSegment(
+                            segment.segmentIndex(),
+                            segment.startMs(),
+                            segment.endMs(),
+                            segment.speaker(),
+                            segment.content(),
+                            segment.tokenCount()
+                    ))
+                    .toList();
+            transcriptVersions.insert(
+                    videoId,
+                    source,
+                    note == null ? "" : note.substring(0, Math.min(note.length(), 255)),
+                    objectMapper.writeValueAsString(snapshot)
+            );
+        } catch (JsonProcessingException exception) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save transcript version");
+        }
+    }
+
+    private List<TranscriptSnapshotSegment> readTranscriptSnapshot(String snapshotJson) {
+        try {
+            return objectMapper.readValue(snapshotJson, new TypeReference<List<TranscriptSnapshotSegment>>() {
+            });
+        } catch (Exception exception) {
+            throw new ApiException(HttpStatus.CONFLICT, "Transcript version snapshot is invalid");
+        }
+    }
+
+    private TranscriptVersionResponse toVersionResponse(TranscriptVersion version) {
+        List<TranscriptSnapshotSegment> snapshot = readTranscriptSnapshot(version.snapshotJson());
+        String preview = snapshot.stream()
+                .map(TranscriptSnapshotSegment::content)
+                .filter(text -> text != null && !text.isBlank())
+                .findFirst()
+                .map(text -> text.length() <= 90 ? text : text.substring(0, 89) + "...")
+                .orElse("");
+        return new TranscriptVersionResponse(
+                version.id(),
+                version.videoId(),
+                version.versionNo(),
+                version.source(),
+                version.note(),
+                snapshot.size(),
+                preview,
+                version.createdAt()
+        );
     }
 
     private String summaryJson(String key, List<String> items) {

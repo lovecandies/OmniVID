@@ -46,6 +46,90 @@ services:
     volumes:
       - omnivid_qdrant_data:/qdrant/storage
 
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.2
+    container_name: omnivid-rocketmq-namesrv
+    command: sh mqnamesrv
+    ports:
+      - "9876:9876"
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.2
+    container_name: omnivid-rocketmq-broker
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/conf/broker.conf
+    depends_on:
+      - rocketmq-namesrv
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+      - "10912:10912"
+    environment:
+      NAMESRV_ADDR: "rocketmq-namesrv:9876"
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
+    volumes:
+      - ./rocketmq/broker.conf:/home/rocketmq/conf/broker.conf
+
+  omnivid-api:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    container_name: omnivid-api
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      rocketmq-namesrv:
+        condition: service_started
+      rocketmq-broker:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/omnivid?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: omnivid
+      SPRING_DATASOURCE_PASSWORD: omnivid_pass
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      OMNIVID_PROVIDER_KEY_SECRET: ${OMNIVID_PROVIDER_KEY_SECRET:-omnivid-dev-provider-secret-change-me}
+      OMNIVID_STORAGE_ROOT: /data/omnivid/storage
+      OMNIVID_FFMPEG_PATH: /usr/bin/ffmpeg
+      OMNIVID_YTDLP_PATH: /usr/local/bin/yt-dlp
+      OMNIVID_ROCKETMQ_NAMESRV_ADDR: rocketmq-namesrv:9876
+      OMNIVID_QDRANT_URL: http://qdrant:6333
+      OMNIVID_LLM_ENABLED: ${OMNIVID_LLM_ENABLED:-false}
+      OMNIVID_LLM_API_KEY: ${OMNIVID_LLM_API_KEY:-}
+      OMNIVID_LLM_BASE_URL: ${OMNIVID_LLM_BASE_URL:-https://api.deepseek.com/v1}
+      OMNIVID_LLM_MODEL: ${OMNIVID_LLM_MODEL:-deepseek-chat}
+      OMNIVID_EMBEDDING_ENABLED: ${OMNIVID_EMBEDDING_ENABLED:-false}
+      OMNIVID_EMBEDDING_MODE: ${OMNIVID_EMBEDDING_MODE:-local}
+      OMNIVID_EMBEDDING_API_KEY: ${OMNIVID_EMBEDDING_API_KEY:-}
+      OMNIVID_RERANK_ENABLED: ${OMNIVID_RERANK_ENABLED:-true}
+      OMNIVID_RERANK_MODE: ${OMNIVID_RERANK_MODE:-local}
+      NO_PROXY: localhost,127.0.0.1,mysql,redis,qdrant,rocketmq-namesrv,rocketmq-broker,host.docker.internal
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../apps/api/storage:/data/omnivid/storage
+
+  omnivid-web:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+    container_name: omnivid-web
+    depends_on:
+      omnivid-api:
+        condition: service_healthy
+    ports:
+      - "5174:80"
+
 volumes:
   omnivid_mysql_data:
   omnivid_redis_data:

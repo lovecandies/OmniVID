@@ -22,6 +22,17 @@ server:
 
 omnivid:
   storage-root: ${OMNIVID_STORAGE_ROOT:${user.dir}/storage}
+  processing:
+    mode: ${OMNIVID_PROCESSING_MODE:local}
+    rocketmq:
+      namesrv-addr: ${OMNIVID_ROCKETMQ_NAMESRV_ADDR:localhost:9876}
+      topic: ${OMNIVID_ROCKETMQ_TOPIC:omnivid-processing}
+      producer-group: ${OMNIVID_ROCKETMQ_PRODUCER_GROUP:omnivid-processing-producer}
+      consumer-group: ${OMNIVID_ROCKETMQ_CONSUMER_GROUP:omnivid-processing-consumer}
+      max-reconsume-times: ${OMNIVID_ROCKETMQ_MAX_RECONSUME_TIMES:3}
+      publish-interval-ms: ${OMNIVID_ROCKETMQ_PUBLISH_INTERVAL_MS:1000}
+  security:
+    provider-key-secret: ${OMNIVID_PROVIDER_KEY_SECRET:omnivid-dev-provider-secret-change-me}
   ffmpeg:
     path: ${OMNIVID_FFMPEG_PATH:E:/video/tools/ffmpeg/runtime/ffmpeg-n7.1-latest-win64-gpl-shared-7.1/bin/ffmpeg.exe}
     audio-filter: '${OMNIVID_FFMPEG_AUDIO_FILTER:highpass=f=100,lowpass=f=7600,afftdn=nf=-28,dynaudnorm=f=150:g=15,loudnorm=I=-16:TP=-1.5:LRA=11}'
@@ -43,6 +54,8 @@ omnivid:
     script-path: ${OMNIVID_OCR_SCRIPT_PATH:E:/video/scripts/ocr_burned_subtitles.py}
     min-confidence: ${OMNIVID_OCR_MIN_CONFIDENCE:0.88}
     timeout: ${OMNIVID_OCR_TIMEOUT:300s}
+    auto-fusion-enabled: ${OMNIVID_OCR_AUTO_FUSION_ENABLED:true}
+    auto-fusion-mode: ${OMNIVID_OCR_AUTO_FUSION_MODE:conservative}
   llm:
     enabled: ${OMNIVID_LLM_ENABLED:false}
     api-key: ${OMNIVID_LLM_API_KEY:}

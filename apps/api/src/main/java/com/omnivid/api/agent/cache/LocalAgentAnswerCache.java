@@ -22,6 +22,12 @@ public class LocalAgentAnswerCache implements AgentAnswerCache {
         cache.put(key(scope, question), response.withCacheHit(false));
     }
 
+    @Override
+    public void evictScope(String scope) {
+        String prefix = scope + ":";
+        cache.keySet().removeIf(key -> key.startsWith(prefix));
+    }
+
     private String key(String scope, String question) {
         return scope + ":" + Integer.toHexString(question.trim().toLowerCase().hashCode());
     }

@@ -42,6 +42,23 @@ CREATE TABLE IF NOT EXISTS processing_job (
 CREATE INDEX IF NOT EXISTS idx_job_video ON processing_job (video_id);
 CREATE INDEX IF NOT EXISTS idx_job_status_updated ON processing_job (status, updated_at);
 
+CREATE TABLE IF NOT EXISTS processing_event (
+  event_id VARCHAR(64) PRIMARY KEY,
+  job_id BIGINT NOT NULL,
+  video_id BIGINT NOT NULL,
+  event_type VARCHAR(64) NOT NULL,
+  payload_json CLOB NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  attempt_count INT NOT NULL DEFAULT 0,
+  last_error VARCHAR(1000),
+  next_attempt_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  consumed_at TIMESTAMP,
+  CONSTRAINT uk_processing_event_job_type UNIQUE (job_id, event_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_processing_event_status_updated ON processing_event (status, updated_at);
 CREATE TABLE IF NOT EXISTS transcript_segment (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   video_id BIGINT NOT NULL,
@@ -57,6 +74,19 @@ CREATE TABLE IF NOT EXISTS transcript_segment (
 
 CREATE INDEX IF NOT EXISTS idx_transcript_video_start ON transcript_segment (video_id, start_ms);
 CREATE INDEX IF NOT EXISTS idx_transcript_video_time_cover ON transcript_segment (video_id, start_ms, end_ms, segment_index);
+
+CREATE TABLE IF NOT EXISTS transcript_version (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  video_id BIGINT NOT NULL,
+  version_no INT NOT NULL,
+  source VARCHAR(40) NOT NULL,
+  note VARCHAR(255) NOT NULL DEFAULT '',
+  snapshot_json CLOB NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uk_transcript_version_no UNIQUE (video_id, version_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_transcript_version_video_created ON transcript_version (video_id, created_at);
 
 CREATE TABLE IF NOT EXISTS summary_asset (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -132,6 +162,54 @@ CREATE TABLE IF NOT EXISTS embedding_provider_config (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uk_embedding_provider UNIQUE (mode, base_url, model)
 );
+
+CREATE TABLE IF NOT EXISTS rerank_provider_config (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  provider_name VARCHAR(80) NOT NULL,
+  mode VARCHAR(32) NOT NULL,
+  base_url VARCHAR(255) NOT NULL,
+  endpoint VARCHAR(120) NOT NULL,
+  model VARCHAR(120) NOT NULL,
+  api_key_encoded CLOB NOT NULL,
+  api_key_masked VARCHAR(32) NOT NULL,
+  timeout_seconds INT NOT NULL DEFAULT 15,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  active BOOLEAN NOT NULL DEFAULT FALSE,
+  last_test_status VARCHAR(32),
+  last_test_message VARCHAR(255),
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uk_rerank_provider UNIQUE (mode, base_url, endpoint, model)
+);
+
+CREATE TABLE IF NOT EXISTS upload_session (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_size BIGINT NOT NULL,
+  file_md5 CHAR(32) NOT NULL,
+  part_size BIGINT NOT NULL,
+  total_parts INT NOT NULL,
+  uploaded_bytes BIGINT NOT NULL DEFAULT 0,
+  status VARCHAR(32) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_upload_user_md5_status ON upload_session (user_id, file_md5, status);
+CREATE INDEX IF NOT EXISTS idx_upload_updated ON upload_session (updated_at);
+
+CREATE TABLE IF NOT EXISTS upload_part (
+  session_id VARCHAR(36) NOT NULL,
+  part_number INT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  part_md5 CHAR(32) NOT NULL,
+  storage_path VARCHAR(512) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (session_id, part_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_upload_part_session ON upload_part (session_id);
 
 CREATE TABLE IF NOT EXISTS term_glossary_entry (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,

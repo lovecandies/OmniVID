@@ -3,6 +3,7 @@ package com.omnivid.api.common;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import com.omnivid.api.observability.TraceContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -27,7 +28,8 @@ public class GlobalExceptionHandler {
     private Map<String, Object> error(String message) {
         return Map.of(
                 "timestamp", Instant.now().toString(),
-                "message", message
+                "message", message,
+                "traceId", TraceContext.currentTraceId() == null ? "" : TraceContext.currentTraceId()
         );
     }
 
@@ -35,6 +37,7 @@ public class GlobalExceptionHandler {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("timestamp", Instant.now().toString());
         body.put("message", exception.getMessage());
+        body.put("traceId", TraceContext.currentTraceId() == null ? "" : TraceContext.currentTraceId());
         if (hasText(exception.suggestion())) {
             body.put("suggestion", exception.suggestion());
         }
