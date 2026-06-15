@@ -1,11 +1,10 @@
 package com.omnivid.api.agent.retrieval;
 
 import com.omnivid.api.common.ApiException;
+import com.omnivid.api.auth.CurrentUserService;
 import com.omnivid.api.security.ProviderSecretService;
 import java.util.List;
 import java.util.Locale;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -14,29 +13,28 @@ public class EmbeddingProviderService {
     private final EmbeddingProviderRepository providers;
     private final OpenAiCompatibleEmbeddingProvider embeddingProvider;
     private final ProviderSecretService secrets;
+    private final CurrentUserService currentUser;
 
     public EmbeddingProviderService(
             EmbeddingProviderRepository providers,
             OpenAiCompatibleEmbeddingProvider embeddingProvider,
-            ProviderSecretService secrets
+            ProviderSecretService secrets,
+            CurrentUserService currentUser
     ) {
         this.providers = providers;
         this.embeddingProvider = embeddingProvider;
         this.secrets = secrets;
-    }
-
-    @EventListener(ApplicationReadyEvent.class)
-    public void loadActiveProvider() {
-        providers.findActive().ifPresent(this::configureProvider);
+        this.currentUser = currentUser;
     }
 
     public List<EmbeddingProviderResponse> list() {
-        return providers.list().stream()
+        return providers.list(currentUserId()).stream()
                 .map(EmbeddingProviderResponse::from)
                 .toList();
     }
 
     public EmbeddingProviderResponse saveAndActivate(EmbeddingProviderSaveRequest request) {
+        long userId = currentUserId();
         String mode = normalizeMode(request.mode());
         String apiKey = request.apiKey() == null ? "" : request.apiKey().trim();
         if (!"bge".equals(mode) && apiKey.isBlank()) {
@@ -48,6 +46,7 @@ public class EmbeddingProviderService {
         int timeoutSeconds = timeoutSeconds(request.timeoutSeconds());
 
         EmbeddingProviderConfig saved = providers.save(
+                userId,
                 providerName,
                 mode,
                 baseUrl,
@@ -56,30 +55,32 @@ public class EmbeddingProviderService {
                 mask(apiKey),
                 timeoutSeconds
         );
-        providers.activate(saved.id());
-        EmbeddingProviderConfig active = providers.findById(saved.id()).orElseThrow();
+        providers.activate(userId, saved.id());
+        EmbeddingProviderConfig active = providers.findById(userId, saved.id()).orElseThrow();
         configureProvider(active);
         return EmbeddingProviderResponse.from(active);
     }
 
     public EmbeddingProviderResponse activate(long id) {
-        EmbeddingProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        EmbeddingProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Embedding provider not found"));
-        providers.activate(provider.id());
-        EmbeddingProviderConfig active = providers.findById(provider.id()).orElseThrow();
+        providers.activate(userId, provider.id());
+        EmbeddingProviderConfig active = providers.findById(userId, provider.id()).orElseThrow();
         configureProvider(active);
         return EmbeddingProviderResponse.from(active);
     }
 
     public EmbeddingProviderResponse rotateKey(long id, EmbeddingProviderRotateRequest request) {
-        EmbeddingProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        EmbeddingProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Embedding provider not found"));
         String apiKey = request.apiKey() == null ? "" : request.apiKey().trim();
         if (!"bge".equals(provider.mode()) && apiKey.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Embedding API Key is required for " + provider.mode());
         }
-        providers.updateKey(provider.id(), secrets.encrypt(apiKey), mask(apiKey));
-        EmbeddingProviderConfig updated = providers.findById(provider.id()).orElseThrow();
+        providers.updateKey(userId, provider.id(), secrets.encrypt(apiKey), mask(apiKey));
+        EmbeddingProviderConfig updated = providers.findById(userId, provider.id()).orElseThrow();
         if (updated.active() && updated.enabled()) {
             configureProvider(updated);
         }
@@ -87,38 +88,48 @@ public class EmbeddingProviderService {
     }
 
     public EmbeddingProviderResponse disable(long id) {
-        EmbeddingProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        EmbeddingProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Embedding provider not found"));
-        providers.disable(provider.id());
+        providers.disable(userId, provider.id());
         if (provider.active()) {
             embeddingProvider.configure(false, "local", "", "", "", provider.timeoutSeconds());
         }
-        return EmbeddingProviderResponse.from(providers.findById(provider.id()).orElseThrow());
+        return EmbeddingProviderResponse.from(providers.findById(userId, provider.id()).orElseThrow());
     }
 
     public void delete(long id) {
-        EmbeddingProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        EmbeddingProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Embedding provider not found"));
-        providers.delete(provider.id());
+        providers.delete(userId, provider.id());
         if (provider.active()) {
             embeddingProvider.configure(false, "local", "", "", "", provider.timeoutSeconds());
         }
     }
 
     public EmbeddingProviderTestResponse testActive() {
-        EmbeddingProviderConfig active = providers.findActive()
+        long userId = currentUserId();
+        EmbeddingProviderConfig active = providers.findActive(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "No active embedding provider"));
         configureProvider(active);
         embeddingProvider.embed("OmniVid embedding connection test: Java, MySQL, Redis, RAG.");
         boolean success = embeddingProvider.cloudBacked();
         String message = success ? embeddingProvider.diagnostic() : embeddingProvider.diagnostic();
-        providers.updateTestResult(active.id(), success ? "OK" : "FAILED", message);
+        providers.updateTestResult(userId, active.id(), success ? "OK" : "FAILED", message);
         return new EmbeddingProviderTestResponse(
                 success,
                 message,
                 embeddingProvider.providerName(),
                 active.model(),
                 embeddingProvider.dimensions()
+        );
+    }
+
+    public void configureActiveForCurrentUser() {
+        providers.findActive(currentUserId()).ifPresentOrElse(
+                this::configureProvider,
+                () -> embeddingProvider.configure(false, "local", "", "", "", 30)
         );
     }
 
@@ -131,6 +142,10 @@ public class EmbeddingProviderService {
                 provider.model(),
                 provider.timeoutSeconds()
         );
+    }
+
+    private long currentUserId() {
+        return currentUser.requireUser().id();
     }
 
     private String normalizeMode(String value) {

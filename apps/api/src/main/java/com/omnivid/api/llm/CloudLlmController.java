@@ -23,11 +23,22 @@ public class CloudLlmController {
 
     @GetMapping("/config")
     CloudLlmConfigResponse config() {
+        providers.configureActiveForCurrentUser();
         return llm.status();
     }
 
     @PostMapping("/config")
     CloudLlmConfigResponse configure(@RequestBody CloudLlmConfigRequest request) {
+        if (request.enabled()) {
+            providers.saveAndActivate(new LlmProviderSaveRequest(
+                    null,
+                    request.apiKey(),
+                    request.baseUrl(),
+                    request.model(),
+                    request.timeoutSeconds()
+            ));
+            return llm.status();
+        }
         return llm.configure(request);
     }
 
@@ -63,6 +74,7 @@ public class CloudLlmController {
 
     @PostMapping("/test")
     CloudLlmTestResponse test() {
+        providers.configureActiveForCurrentUser();
         if (!llm.available()) {
             CloudLlmTestResponse response = new CloudLlmTestResponse(
                     false,

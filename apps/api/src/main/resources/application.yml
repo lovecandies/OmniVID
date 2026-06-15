@@ -1,6 +1,9 @@
 spring:
   application:
     name: omnivid-api
+  session:
+    store-type: none
+    timeout: 8h
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
@@ -19,6 +22,13 @@ spring:
       max-request-size: 2GB
 server:
   port: 8080
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${OMNIVID_SESSION_COOKIE_SECURE:false}
 
 omnivid:
   storage-root: ${OMNIVID_STORAGE_ROOT:${user.dir}/storage}
@@ -33,6 +43,29 @@ omnivid:
       publish-interval-ms: ${OMNIVID_ROCKETMQ_PUBLISH_INTERVAL_MS:1000}
   security:
     provider-key-secret: ${OMNIVID_PROVIDER_KEY_SECRET:omnivid-dev-provider-secret-change-me}
+    admin-emails: ${OMNIVID_ADMIN_EMAILS:}
+    public-base-url: ${OMNIVID_PUBLIC_BASE_URL:}
+    trust-forwarded-for: ${OMNIVID_TRUST_FORWARDED_FOR:true}
+    login-rate-limit:
+      mode: ${OMNIVID_LOGIN_RATE_LIMIT_MODE:local}
+      max-failures: ${OMNIVID_LOGIN_MAX_FAILURES:5}
+      captcha-threshold: ${OMNIVID_LOGIN_CAPTCHA_THRESHOLD:3}
+      window: ${OMNIVID_LOGIN_FAILURE_WINDOW:10m}
+    api-rate-limit:
+      enabled: ${OMNIVID_API_RATE_LIMIT_ENABLED:true}
+      mode: ${OMNIVID_API_RATE_LIMIT_MODE:local}
+      max-requests: ${OMNIVID_API_RATE_LIMIT_MAX_REQUESTS:300}
+      window: ${OMNIVID_API_RATE_LIMIT_WINDOW:1m}
+    upload:
+      max-bytes: ${OMNIVID_UPLOAD_MAX_BYTES:2147483648}
+    compatibility-upload-enabled: ${OMNIVID_COMPATIBILITY_UPLOAD_ENABLED:true}
+  account:
+    default-max-storage-bytes: ${OMNIVID_ACCOUNT_MAX_STORAGE_BYTES:10737418240}
+    default-max-video-count: ${OMNIVID_ACCOUNT_MAX_VIDEO_COUNT:50}
+    default-max-knowledge-base-count: ${OMNIVID_ACCOUNT_MAX_KNOWLEDGE_BASE_COUNT:20}
+    email-token-ttl: ${OMNIVID_ACCOUNT_EMAIL_TOKEN_TTL:24h}
+    password-reset-token-ttl: ${OMNIVID_ACCOUNT_PASSWORD_RESET_TOKEN_TTL:30m}
+    expose-dev-tokens: ${OMNIVID_ACCOUNT_EXPOSE_DEV_TOKENS:true}
   ffmpeg:
     path: ${OMNIVID_FFMPEG_PATH:E:/video/tools/ffmpeg/runtime/ffmpeg-n7.1-latest-win64-gpl-shared-7.1/bin/ffmpeg.exe}
     audio-filter: '${OMNIVID_FFMPEG_AUDIO_FILTER:highpass=f=100,lowpass=f=7600,afftdn=nf=-28,dynaudnorm=f=150:g=15,loudnorm=I=-16:TP=-1.5:LRA=11}'
@@ -40,6 +73,7 @@ omnivid:
   url-import:
     ytdlp-path: ${OMNIVID_YTDLP_PATH:E:/video/tools/url/yt-dlp.exe}
     timeout: ${OMNIVID_YTDLP_TIMEOUT:300s}
+    allow-local-cookie-source: ${OMNIVID_URL_IMPORT_ALLOW_LOCAL_COOKIE_SOURCE:true}
   asr:
     path: ${OMNIVID_ASR_PATH:E:/video/tools/asr/runtime/Release/whisper-cli.exe}
     model: ${OMNIVID_ASR_MODEL:E:/video/tools/asr/ggml-base.bin}
@@ -105,6 +139,11 @@ spring:
     redis:
       host: ${OMNIVID_REDIS_HOST:localhost}
       port: ${OMNIVID_REDIS_PORT:6379}
+  session:
+    store-type: redis
+    redis:
+      namespace: spring:session
+      repository-type: indexed
 
 omnivid:
   dedupe-lock:
@@ -117,3 +156,8 @@ omnivid:
     mode: redis
   agent-short-term-memory:
     mode: redis
+  security:
+    login-rate-limit:
+      mode: redis
+    api-rate-limit:
+      mode: redis

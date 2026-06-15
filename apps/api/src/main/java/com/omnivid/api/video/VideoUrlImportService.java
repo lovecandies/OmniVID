@@ -3,6 +3,7 @@ package com.omnivid.api.video;
 import com.omnivid.api.common.ApiException;
 import com.omnivid.api.storage.LocalVideoStorageService;
 import com.omnivid.api.storage.StoredVideoFile;
+import com.omnivid.api.security.VideoUploadSecurityService;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -33,6 +34,8 @@ public class VideoUrlImportService {
     private final String ytdlpPath;
     private final String ffmpegPath;
     private final Duration timeout;
+    private final VideoUploadSecurityService uploadSecurity;
+    private final boolean allowLocalCookieSource;
 
     public VideoUrlImportService(
             VideoService videos,
@@ -40,7 +43,9 @@ public class VideoUrlImportService {
             @Value("${omnivid.storage-root}") String storageRoot,
             @Value("${omnivid.url-import.ytdlp-path:yt-dlp}") String ytdlpPath,
             @Value("${omnivid.ffmpeg.path}") String ffmpegPath,
-            @Value("${omnivid.url-import.timeout:300s}") Duration timeout
+            @Value("${omnivid.url-import.timeout:300s}") Duration timeout,
+            @Value("${omnivid.url-import.allow-local-cookie-source:true}") boolean allowLocalCookieSource,
+            VideoUploadSecurityService uploadSecurity
     ) {
         this.videos = videos;
         this.storage = storage;
@@ -48,6 +53,8 @@ public class VideoUrlImportService {
         this.ytdlpPath = ytdlpPath;
         this.ffmpegPath = ffmpegPath;
         this.timeout = timeout;
+        this.uploadSecurity = uploadSecurity;
+        this.allowLocalCookieSource = allowLocalCookieSource;
     }
 
     public CompleteUploadResponse importUrl(String input, String cookiesFile, String cookiesFromBrowser) {
@@ -58,6 +65,7 @@ public class VideoUrlImportService {
             Files.createDirectories(workRoot);
             workDir = Files.createTempDirectory(workRoot, "source-");
             Path downloadedFile = download(url, platform, workDir, cookiesFile, cookiesFromBrowser);
+            uploadSecurity.validateStoredFile(downloadedFile, downloadedFile.getFileName().toString());
             StoredVideoFile storedFile = storage.storeLocalFile(downloadedFile, downloadedFile.getFileName().toString());
             return videos.completeStoredUpload(storedFile);
         } catch (IOException exception) {
@@ -132,6 +140,13 @@ public class VideoUrlImportService {
 
     private void appendCookieOptions(List<String> command, String cookiesFile, String cookiesFromBrowser) {
         String file = cookiesFile == null ? "" : cookiesFile.trim();
+        String browser = cookiesFromBrowser == null ? "" : cookiesFromBrowser.trim().toLowerCase(Locale.ROOT);
+        if (!allowLocalCookieSource && (!file.isBlank() || (!browser.isBlank() && !"none".equals(browser)))) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "Server-local cookie sources are disabled for public deployment"
+            );
+        }
         if (!file.isBlank()) {
             Path path = Paths.get(file).toAbsolutePath().normalize();
             if (!Files.isRegularFile(path)) {
@@ -142,7 +157,6 @@ public class VideoUrlImportService {
             return;
         }
 
-        String browser = cookiesFromBrowser == null ? "" : cookiesFromBrowser.trim().toLowerCase(Locale.ROOT);
         if (browser.isBlank() || "none".equals(browser)) {
             return;
         }

@@ -3,9 +3,32 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(160) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   nickname VARCHAR(80) NOT NULL,
+  email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  disabled BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMP NULL,
+  password_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uk_user_email UNIQUE (email)
+);
+
+CREATE TABLE IF NOT EXISTS account_token (
+  token CHAR(64) PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  purpose VARCHAR(40) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  consumed_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_account_token_user_purpose (user_id, purpose, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS user_quota (
+  user_id BIGINT PRIMARY KEY,
+  max_storage_bytes BIGINT NOT NULL,
+  max_video_count INT NOT NULL,
+  max_knowledge_base_count INT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS video_asset (
@@ -14,12 +37,13 @@ CREATE TABLE IF NOT EXISTS video_asset (
   md5 CHAR(32) NOT NULL,
   original_name VARCHAR(255) NOT NULL,
   storage_path VARCHAR(512) NOT NULL,
+  file_size_bytes BIGINT NOT NULL DEFAULT 0,
   duration_ms BIGINT NOT NULL DEFAULT 0,
   status VARCHAR(32) NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   version INT NOT NULL DEFAULT 0,
-  CONSTRAINT uk_video_md5 UNIQUE (md5),
+  CONSTRAINT uk_video_user_md5 UNIQUE (user_id, md5),
   KEY idx_video_user_created (user_id, created_at)
 );
 
@@ -108,11 +132,12 @@ CREATE TABLE IF NOT EXISTS chat_message (
 
 CREATE TABLE IF NOT EXISTS knowledge_base (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL DEFAULT 1,
   name VARCHAR(120) NOT NULL,
   description VARCHAR(500) NOT NULL DEFAULT '',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT uk_knowledge_base_name UNIQUE (name)
+  CONSTRAINT uk_knowledge_base_user_name UNIQUE (user_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_base_video (
@@ -125,6 +150,7 @@ CREATE TABLE IF NOT EXISTS knowledge_base_video (
 
 CREATE TABLE IF NOT EXISTS llm_provider_config (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL DEFAULT 1,
   provider_name VARCHAR(80) NOT NULL,
   base_url VARCHAR(255) NOT NULL,
   model VARCHAR(120) NOT NULL,
@@ -137,11 +163,12 @@ CREATE TABLE IF NOT EXISTS llm_provider_config (
   last_test_message VARCHAR(255),
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT uk_llm_provider UNIQUE (provider_name, base_url, model)
+  CONSTRAINT uk_llm_provider_user UNIQUE (user_id, provider_name, base_url, model)
 );
 
 CREATE TABLE IF NOT EXISTS embedding_provider_config (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL DEFAULT 1,
   provider_name VARCHAR(80) NOT NULL,
   mode VARCHAR(32) NOT NULL,
   base_url VARCHAR(255) NOT NULL,
@@ -155,11 +182,12 @@ CREATE TABLE IF NOT EXISTS embedding_provider_config (
   last_test_message VARCHAR(255),
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT uk_embedding_provider UNIQUE (mode, base_url, model)
+  CONSTRAINT uk_embedding_provider_user UNIQUE (user_id, mode, base_url, model)
 );
 
 CREATE TABLE IF NOT EXISTS rerank_provider_config (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL DEFAULT 1,
   provider_name VARCHAR(80) NOT NULL,
   mode VARCHAR(32) NOT NULL,
   base_url VARCHAR(255) NOT NULL,
@@ -174,7 +202,7 @@ CREATE TABLE IF NOT EXISTS rerank_provider_config (
   last_test_message VARCHAR(255),
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT uk_rerank_provider UNIQUE (mode, base_url, endpoint, model)
+  CONSTRAINT uk_rerank_provider_user UNIQUE (user_id, mode, base_url, endpoint, model)
 );
 
 CREATE TABLE IF NOT EXISTS upload_session (

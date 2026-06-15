@@ -82,23 +82,31 @@ public class ProcessingEventRepository {
                 .list();
     }
 
-    public List<ProcessingEvent> list(String status, int limit) {
+    public List<ProcessingEvent> list(long userId, String status, int limit) {
         if (status == null || status.isBlank()) {
             return jdbc.sql("""
-                    SELECT * FROM processing_event
-                    ORDER BY updated_at DESC, event_id DESC
+                    SELECT pe.*
+                    FROM processing_event pe
+                    JOIN video_asset va ON va.id = pe.video_id
+                    WHERE va.user_id = :userId
+                    ORDER BY pe.updated_at DESC, pe.event_id DESC
                     LIMIT :limit
                     """)
+                    .param("userId", userId)
                     .param("limit", clamp(limit))
                     .query(this::map)
                     .list();
         }
         return jdbc.sql("""
-                SELECT * FROM processing_event
-                WHERE status = :status
-                ORDER BY updated_at DESC, event_id DESC
+                SELECT pe.*
+                FROM processing_event pe
+                JOIN video_asset va ON va.id = pe.video_id
+                WHERE pe.status = :status
+                  AND va.user_id = :userId
+                ORDER BY pe.updated_at DESC, pe.event_id DESC
                 LIMIT :limit
                 """)
+                .param("userId", userId)
                 .param("status", status.trim().toUpperCase())
                 .param("limit", clamp(limit))
                 .query(this::map)

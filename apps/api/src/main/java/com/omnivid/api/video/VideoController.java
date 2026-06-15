@@ -4,6 +4,7 @@ import com.omnivid.api.summary.SummaryAsset;
 import com.omnivid.api.progress.ProgressSnapshot;
 import com.omnivid.api.storage.LocalVideoStorageService;
 import com.omnivid.api.storage.StoredVideoFile;
+import com.omnivid.api.security.VideoUploadSecurityService;
 import com.omnivid.api.transcript.TranscriptEditRequest;
 import com.omnivid.api.transcript.TranscriptSegment;
 import com.omnivid.api.transcript.TranscriptVersionDetailResponse;
@@ -33,6 +34,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.beans.factory.annotation.Value;
+import com.omnivid.api.common.ApiException;
 
 @RestController
 @RequestMapping("/api/videos")
@@ -40,20 +43,34 @@ public class VideoController {
     private final VideoService service;
     private final LocalVideoStorageService storage;
     private final VideoUrlImportService urlImportService;
+    private final VideoUploadSecurityService uploadSecurity;
+    private final boolean compatibilityUploadEnabled;
 
-    public VideoController(VideoService service, LocalVideoStorageService storage, VideoUrlImportService urlImportService) {
+    public VideoController(
+            VideoService service,
+            LocalVideoStorageService storage,
+            VideoUrlImportService urlImportService,
+            VideoUploadSecurityService uploadSecurity,
+            @Value("${omnivid.security.compatibility-upload-enabled:true}") boolean compatibilityUploadEnabled
+    ) {
         this.service = service;
         this.storage = storage;
         this.urlImportService = urlImportService;
+        this.uploadSecurity = uploadSecurity;
+        this.compatibilityUploadEnabled = compatibilityUploadEnabled;
     }
 
     @PostMapping("/upload/complete")
     CompleteUploadResponse completeUpload(@Valid @RequestBody CompleteUploadRequest request) {
+        if (!compatibilityUploadEnabled) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Compatibility upload endpoint is disabled");
+        }
         return service.completeUpload(request);
     }
 
     @PostMapping(value = "/upload/file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     CompleteUploadResponse uploadFile(@RequestPart("file") MultipartFile file) {
+        uploadSecurity.validateMultipart(file);
         StoredVideoFile storedFile = storage.store(file);
         return service.completeStoredUpload(storedFile);
     }

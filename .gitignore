@@ -28,6 +28,7 @@ storage/
 bilibili/
 备份/
 artifacts/
+backups/
 
 # Downloaded tools, model binaries, and large archives
 tools/

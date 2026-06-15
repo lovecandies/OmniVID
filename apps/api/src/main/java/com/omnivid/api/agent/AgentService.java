@@ -4,12 +4,16 @@ import com.omnivid.api.common.ApiException;
 import com.omnivid.api.agent.cache.AgentAnswerCache;
 import com.omnivid.api.agent.memory.AgentShortTermMemory;
 import com.omnivid.api.agent.retrieval.AgentRerankService;
+import com.omnivid.api.agent.retrieval.EmbeddingProviderService;
+import com.omnivid.api.agent.retrieval.RerankProviderService;
 import com.omnivid.api.agent.retrieval.TranscriptVectorSearch;
+import com.omnivid.api.auth.CurrentUserService;
 import com.omnivid.api.knowledge.KnowledgeBaseDetailResponse;
 import com.omnivid.api.knowledge.KnowledgeBaseService;
 import com.omnivid.api.ratelimit.AgentRateLimiter;
 import com.omnivid.api.llm.CloudLlmClient;
 import com.omnivid.api.llm.CloudLlmResult;
+import com.omnivid.api.llm.LlmProviderService;
 import com.omnivid.api.transcript.TranscriptRepository;
 import com.omnivid.api.transcript.TranscriptSegment;
 import com.omnivid.api.video.VideoAsset;
@@ -25,7 +29,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class AgentService {
-    private static final long DEMO_USER_ID = 1L;
     private static final int TOP_K = 3;
     private static final int CONTEXT_MESSAGE_LIMIT = 6;
     private static final double SEMANTIC_EVIDENCE_THRESHOLD = 0.32;
@@ -46,6 +49,10 @@ public class AgentService {
     private final AgentRerankService rerankService;
     private final KnowledgeBaseService knowledgeBases;
     private final CloudLlmClient llm;
+    private final CurrentUserService currentUser;
+    private final LlmProviderService llmProviders;
+    private final EmbeddingProviderService embeddingProviders;
+    private final RerankProviderService rerankProviders;
 
     public AgentService(
             VideoService videos,
@@ -57,7 +64,11 @@ public class AgentService {
             TranscriptVectorSearch vectorSearch,
             AgentRerankService rerankService,
             KnowledgeBaseService knowledgeBases,
-            CloudLlmClient llm
+            CloudLlmClient llm,
+            CurrentUserService currentUser,
+            LlmProviderService llmProviders,
+            EmbeddingProviderService embeddingProviders,
+            RerankProviderService rerankProviders
     ) {
         this.videos = videos;
         this.transcripts = transcripts;
@@ -69,12 +80,18 @@ public class AgentService {
         this.rerankService = rerankService;
         this.knowledgeBases = knowledgeBases;
         this.llm = llm;
+        this.currentUser = currentUser;
+        this.llmProviders = llmProviders;
+        this.embeddingProviders = embeddingProviders;
+        this.rerankProviders = rerankProviders;
     }
 
     public AgentAskResponse ask(long videoId, AgentAskRequest request) {
-        String scope = "video:" + videoId;
+        long userId = currentUserId();
+        String scope = tenantScope(userId, "video:" + videoId);
         requireAllowed(scope);
         videos.requireVideo(videoId);
+        configureActiveProvidersForCurrentUser();
         Optional<GuardrailDecision> guardrail = inspectQuestion(request.question());
         if (guardrail.isPresent()) {
             return blockedVideoResponse(videoId, request.question(), guardrail.get());
@@ -180,13 +197,17 @@ public class AgentService {
     }
 
     public AgentAskResponse askDefaultKnowledgeBase(AgentAskRequest request) {
-        String scope = "kb:default";
+        long userId = currentUserId();
+        String scope = tenantScope(userId, "kb:default");
+        configureActiveProvidersForCurrentUser();
         return askKnowledgeBaseScope(scope, "默认知识库", videos.listVideos(), request);
     }
 
     public AgentAskResponse askKnowledgeBase(long knowledgeBaseId, AgentAskRequest request) {
+        long userId = currentUserId();
         KnowledgeBaseDetailResponse detail = knowledgeBases.detail(knowledgeBaseId);
-        String scope = "kb:" + knowledgeBaseId;
+        String scope = tenantScope(userId, "kb:" + knowledgeBaseId);
+        configureActiveProvidersForCurrentUser();
         return askKnowledgeBaseScope(scope, detail.knowledgeBase().name(), detail.videos(), request);
     }
 
@@ -345,6 +366,20 @@ public class AgentService {
         if (!rateLimiter.allow(scope)) {
             throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "Agent rate limit exceeded, retry later");
         }
+    }
+
+    private void configureActiveProvidersForCurrentUser() {
+        llmProviders.configureActiveForCurrentUser();
+        embeddingProviders.configureActiveForCurrentUser();
+        rerankProviders.configureActiveForCurrentUser();
+    }
+
+    private long currentUserId() {
+        return currentUser.requireUser().id();
+    }
+
+    private String tenantScope(long userId, String scope) {
+        return "user:" + userId + ":" + scope;
     }
 
     private Optional<GuardrailDecision> inspectQuestion(String question) {

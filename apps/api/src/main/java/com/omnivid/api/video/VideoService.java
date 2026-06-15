@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnivid.api.common.ApiException;
+import com.omnivid.api.auth.CurrentUserService;
 import com.omnivid.api.asr.BurnedSubtitleOcrService;
 import com.omnivid.api.asr.AsrTranscriptSegment;
 import com.omnivid.api.asr.AsrTranscriptionException;
@@ -26,6 +27,7 @@ import com.omnivid.api.media.FfmpegAudioExtractionService;
 import com.omnivid.api.media.VideoMetadataProbeService;
 import com.omnivid.api.progress.ProgressCacheService;
 import com.omnivid.api.progress.ProgressSnapshot;
+import com.omnivid.api.quota.UserQuotaService;
 import com.omnivid.api.storage.LocalVideoStorageService;
 import com.omnivid.api.storage.StoredVideoFile;
 import com.omnivid.api.agent.retrieval.TranscriptVectorSearch;
@@ -63,9 +65,9 @@ import org.slf4j.LoggerFactory;
 @Service
 public class VideoService {
     private static final Logger log = LoggerFactory.getLogger(VideoService.class);
-    private static final long DEMO_USER_ID = 1L;
 
     private final VideoRepository videos;
+    private final CurrentUserService currentUser;
     private final ProcessingJobRepository jobs;
     private final TranscriptRepository transcripts;
     private final TranscriptVersionRepository transcriptVersions;
@@ -82,6 +84,7 @@ public class VideoService {
     private final ProcessingDispatchService processingDispatch;
     private final ProgressCacheService progressCache;
     private final AgentAnswerCache answerCache;
+    private final UserQuotaService quotas;
     private final TranscriptVectorSearch vectorSearch;
     private final TranscriptContextRepairService contextRepairService;
     private final SubtitleTextSanitizer sanitizer;
@@ -92,6 +95,7 @@ public class VideoService {
 
     public VideoService(
             VideoRepository videos,
+            CurrentUserService currentUser,
             ProcessingJobRepository jobs,
             TranscriptRepository transcripts,
             TranscriptVersionRepository transcriptVersions,
@@ -108,6 +112,7 @@ public class VideoService {
             ProcessingDispatchService processingDispatch,
             ProgressCacheService progressCache,
             AgentAnswerCache answerCache,
+            UserQuotaService quotas,
             TranscriptVectorSearch vectorSearch,
             TranscriptContextRepairService contextRepairService,
             SubtitleTextSanitizer sanitizer,
@@ -117,6 +122,7 @@ public class VideoService {
             @Value("${omnivid.processing.mode:local}") String processingMode
     ) {
         this.videos = videos;
+        this.currentUser = currentUser;
         this.jobs = jobs;
         this.transcripts = transcripts;
         this.transcriptVersions = transcriptVersions;
@@ -133,6 +139,7 @@ public class VideoService {
         this.processingDispatch = processingDispatch;
         this.progressCache = progressCache;
         this.answerCache = answerCache;
+        this.quotas = quotas;
         this.vectorSearch = vectorSearch;
         this.contextRepairService = contextRepairService;
         this.sanitizer = sanitizer;
@@ -144,10 +151,11 @@ public class VideoService {
 
     @Transactional
     public CompleteUploadResponse completeUpload(CompleteUploadRequest request) {
+        long userId = currentUserId();
         String md5 = request.md5().toLowerCase();
         try (DedupeLock lock = dedupeLocks.tryLock(md5, Duration.ofSeconds(30))) {
             if (!lock.acquired()) {
-                VideoAsset lockedExisting = videos.findByMd5(md5)
+                VideoAsset lockedExisting = videos.findByMd5AndUserId(md5, userId)
                         .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, "Video is being processed, retry later"));
                 ProcessingJob job = jobs.findLatestByVideoId(lockedExisting.id())
                         .orElseGet(() -> jobs.create(lockedExisting.id()));
@@ -156,8 +164,10 @@ public class VideoService {
 
             return completeUploadWithLock(
                     md5,
+                    userId,
                     request.originalName(),
                     "local://" + md5 + "/" + request.originalName(),
+                    0,
                     request.durationMs(),
                     null
             );
@@ -166,10 +176,11 @@ public class VideoService {
 
     @Transactional
     public CompleteUploadResponse completeStoredUpload(StoredVideoFile storedFile) {
+        long userId = currentUserId();
         String md5 = storedFile.md5().toLowerCase();
         try (DedupeLock lock = dedupeLocks.tryLock(md5, Duration.ofSeconds(30))) {
             if (!lock.acquired()) {
-                VideoAsset lockedExisting = videos.findByMd5(md5)
+                VideoAsset lockedExisting = videos.findByMd5AndUserId(md5, userId)
                         .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, "Video is being processed, retry later"));
                 ProcessingJob job = jobs.findLatestByVideoId(lockedExisting.id())
                         .orElseGet(() -> jobs.create(lockedExisting.id()));
@@ -177,7 +188,14 @@ public class VideoService {
             }
 
             long durationMs = metadataProbe.durationMs(storedFile);
-            CompleteUploadResponse response = createUploadJobWithLock(md5, storedFile.originalName(), storedFile.storagePath(), durationMs);
+            CompleteUploadResponse response = createUploadJobWithLock(
+                    userId,
+                    md5,
+                    storedFile.originalName(),
+                    storedFile.storagePath(),
+                    storedFile.sizeBytes(),
+                    durationMs
+            );
             if (!response.deduplicated()) {
                 processingDispatch.dispatch(new ProcessingCommand(response.video().id(), response.job().id(), false));
             }
@@ -187,23 +205,27 @@ public class VideoService {
 
     private CompleteUploadResponse completeUploadWithLock(
             String md5,
+            long userId,
             String originalName,
             String storagePath,
+            long fileSizeBytes,
             long durationMs,
             StoredVideoFile storedFile
     ) {
-        VideoAsset existing = videos.findByMd5(md5).orElse(null);
+        VideoAsset existing = videos.findByMd5AndUserId(md5, userId).orElse(null);
         if (existing != null) {
             ProcessingJob job = jobs.findLatestByVideoId(existing.id())
                     .orElseGet(() -> jobs.create(existing.id()));
             return new CompleteUploadResponse(true, existing, job);
         }
+        quotas.requireCanCreateVideo(userId, fileSizeBytes);
 
         VideoAsset video = videos.insert(
-                DEMO_USER_ID,
+                userId,
                 md5,
                 originalName,
                 storagePath,
+                fileSizeBytes,
                 durationMs
         );
         ProcessingJob job = jobs.create(video.id());
@@ -213,23 +235,27 @@ public class VideoService {
     }
 
     private CompleteUploadResponse createUploadJobWithLock(
+            long userId,
             String md5,
             String originalName,
             String storagePath,
+            long fileSizeBytes,
             long durationMs
     ) {
-        VideoAsset existing = videos.findByMd5(md5).orElse(null);
+        VideoAsset existing = videos.findByMd5AndUserId(md5, userId).orElse(null);
         if (existing != null) {
             ProcessingJob job = jobs.findLatestByVideoId(existing.id())
                     .orElseGet(() -> jobs.create(existing.id()));
             return new CompleteUploadResponse(true, existing, job);
         }
+        quotas.requireCanCreateVideo(userId, fileSizeBytes);
 
         VideoAsset video = videos.insert(
-                DEMO_USER_ID,
+                userId,
                 md5,
                 originalName,
                 storagePath,
+                fileSizeBytes,
                 durationMs
         );
         ProcessingJob job = jobs.create(video.id());
@@ -243,7 +269,7 @@ public class VideoService {
                 "jobId", command.jobId()
         ))) {
             log.info("video_processing_started");
-            VideoAsset video = requireVideo(command.videoId());
+            VideoAsset video = requireExistingVideo(command.videoId());
             StoredVideoFile storedFile = storage.loadStoredFile(video.storagePath(), video.originalName(), video.md5());
             boolean completed = processStoredVideo(video.id(), command.jobId(), storedFile, command.replaceExistingTranscripts());
             log.info(completed ? "video_processing_completed" : "video_processing_failed");
@@ -342,7 +368,7 @@ public class VideoService {
     }
 
     public List<VideoAsset> listVideos() {
-        return videos.list(DEMO_USER_ID);
+        return videos.list(currentUserId());
     }
 
     @Transactional
@@ -485,15 +511,18 @@ public class VideoService {
         VideoAsset video = videos.findById(videoId).orElseThrow();
         ensureSummaryAssetsFromTranscripts(video, transcripts.listByVideoId(videoId));
         indexVideoTranscripts(videoId);
-        evictAgentAnswerCache(videoId);
+        evictAgentAnswerCache(video);
     }
 
-    private void evictAgentAnswerCache(long videoId) {
+    private void evictAgentAnswerCache(VideoAsset video) {
+        long userId = video.userId();
+        long videoId = video.id();
+        String prefix = "user:" + userId + ":";
         List<String> scopes = new ArrayList<>();
-        scopes.add("video:" + videoId);
-        scopes.add("kb:default");
-        knowledgeBases.knowledgeBaseIdsByVideoId(videoId).stream()
-                .map(id -> "kb:" + id)
+        scopes.add(prefix + "video:" + videoId);
+        scopes.add(prefix + "kb:default");
+        knowledgeBases.knowledgeBaseIdsByVideoId(userId, videoId).stream()
+                .map(id -> prefix + "kb:" + id)
                 .forEach(scopes::add);
         answerCache.evictScopes(scopes);
     }
@@ -573,6 +602,11 @@ public class VideoService {
     }
 
     public VideoAsset requireVideo(long videoId) {
+        return videos.findByIdAndUserId(videoId, currentUserId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Video not found"));
+    }
+
+    private VideoAsset requireExistingVideo(long videoId) {
         return videos.findById(videoId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Video not found"));
     }
@@ -690,6 +724,10 @@ public class VideoService {
 
     public ProgressSnapshot progress(long videoId) {
         requireVideo(videoId);
+        return progressSnapshot(videoId);
+    }
+
+    private ProgressSnapshot progressSnapshot(long videoId) {
         return progressCache.get(videoId)
                 .orElseGet(() -> {
                     ProcessingJob job = jobs.findLatestByVideoId(videoId)
@@ -704,7 +742,7 @@ public class VideoService {
         Thread.startVirtualThread(() -> {
             try {
                 while (true) {
-                    ProgressSnapshot snapshot = progress(videoId);
+                    ProgressSnapshot snapshot = progressSnapshot(videoId);
                     emitter.send(SseEmitter.event().name("progress").data(snapshot));
                     if (!"RUNNING".equals(snapshot.status())) {
                         emitter.complete();
@@ -1146,6 +1184,10 @@ public class VideoService {
     private String formatTime(long ms) {
         long totalSeconds = ms / 1000;
         return "%02d:%02d".formatted(totalSeconds / 60, totalSeconds % 60);
+    }
+
+    private long currentUserId() {
+        return currentUser.requireUser().id();
     }
 
     private int tokenCount(String content) {

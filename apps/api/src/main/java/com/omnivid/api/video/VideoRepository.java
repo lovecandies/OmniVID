@@ -25,9 +25,31 @@ public class VideoRepository {
                 .optional();
     }
 
+    public Optional<VideoAsset> findByMd5AndUserId(String md5, long userId) {
+        return jdbc.sql("""
+                SELECT * FROM video_asset
+                WHERE md5 = :md5 AND user_id = :userId
+                """)
+                .param("md5", md5)
+                .param("userId", userId)
+                .query(this::map)
+                .optional();
+    }
+
     public Optional<VideoAsset> findById(long id) {
         return jdbc.sql("SELECT * FROM video_asset WHERE id = :id")
                 .param("id", id)
+                .query(this::map)
+                .optional();
+    }
+
+    public Optional<VideoAsset> findByIdAndUserId(long id, long userId) {
+        return jdbc.sql("""
+                SELECT * FROM video_asset
+                WHERE id = :id AND user_id = :userId
+                """)
+                .param("id", id)
+                .param("userId", userId)
                 .query(this::map)
                 .optional();
     }
@@ -44,20 +66,37 @@ public class VideoRepository {
                 .list();
     }
 
-    public VideoAsset insert(long userId, String md5, String originalName, String storagePath, long durationMs) {
+    public VideoAsset insert(long userId, String md5, String originalName, String storagePath, long fileSizeBytes, long durationMs) {
         GeneratedKeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.sql("""
-                INSERT INTO video_asset (user_id, md5, original_name, storage_path, duration_ms, status)
-                VALUES (:userId, :md5, :originalName, :storagePath, :durationMs, 'PROCESSING')
+                INSERT INTO video_asset (user_id, md5, original_name, storage_path, file_size_bytes, duration_ms, status)
+                VALUES (:userId, :md5, :originalName, :storagePath, :fileSizeBytes, :durationMs, 'PROCESSING')
                 """)
                 .param("userId", userId)
                 .param("md5", md5)
                 .param("originalName", originalName)
                 .param("storagePath", storagePath)
+                .param("fileSizeBytes", Math.max(0, fileSizeBytes))
                 .param("durationMs", durationMs)
                 .update(keyHolder, "id");
 
         return findById(keyHolder.getKey().longValue()).orElseThrow();
+    }
+
+    public int countByUserId(long userId) {
+        Integer count = jdbc.sql("SELECT COUNT(*) FROM video_asset WHERE user_id = :userId")
+                .param("userId", userId)
+                .query(Integer.class)
+                .single();
+        return count == null ? 0 : count;
+    }
+
+    public long storageBytesByUserId(long userId) {
+        Long bytes = jdbc.sql("SELECT COALESCE(SUM(file_size_bytes), 0) FROM video_asset WHERE user_id = :userId")
+                .param("userId", userId)
+                .query(Long.class)
+                .single();
+        return bytes == null ? 0 : bytes;
     }
 
     public void markReady(long id) {
@@ -107,6 +146,7 @@ public class VideoRepository {
                 rs.getString("md5"),
                 rs.getString("original_name"),
                 rs.getString("storage_path"),
+                rs.getLong("file_size_bytes"),
                 rs.getLong("duration_ms"),
                 rs.getString("status"),
                 toInstant(rs.getTimestamp("created_at")),

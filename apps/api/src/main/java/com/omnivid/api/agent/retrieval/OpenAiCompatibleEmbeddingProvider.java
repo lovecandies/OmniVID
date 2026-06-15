@@ -21,15 +21,9 @@ public class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvider {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final LocalHashEmbeddingProvider fallback;
-    private volatile String mode;
-    private volatile boolean enabled;
-    private volatile String apiKey;
-    private volatile String baseUrl;
-    private volatile String model;
-    private volatile Duration timeout;
-    private volatile boolean lastCloudSuccess;
-    private volatile int cloudDimensions;
-    private volatile String lastFailure = "";
+    private final ProviderConfig defaultConfig;
+    private final ThreadLocal<ProviderConfig> scopedConfig = new ThreadLocal<>();
+    private final ThreadLocal<ProviderState> scopedState;
 
     public OpenAiCompatibleEmbeddingProvider(
             ObjectMapper objectMapper,
@@ -44,16 +38,19 @@ public class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvider {
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
         this.fallback = fallback;
-        this.mode = normalizeMode(mode);
-        this.enabled = enabled;
-        this.apiKey = apiKey == null ? "" : apiKey.trim();
-        this.baseUrl = normalizeBaseUrl(baseUrl, this.mode);
-        this.model = normalizeModel(model, this.mode);
-        this.timeout = timeout;
-        this.cloudDimensions = fallback.dimensions();
+        String normalizedMode = normalizeMode(mode);
+        this.defaultConfig = new ProviderConfig(
+                enabled,
+                normalizedMode,
+                apiKey == null ? "" : apiKey.trim(),
+                normalizeBaseUrl(baseUrl, normalizedMode),
+                normalizeModel(model, normalizedMode),
+                timeout
+        );
+        this.scopedState = ThreadLocal.withInitial(() -> ProviderState.initial(fallback.dimensions()));
     }
 
-    public synchronized void configure(
+    public void configure(
             boolean enabled,
             String mode,
             String apiKey,
@@ -61,31 +58,35 @@ public class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvider {
             String model,
             int timeoutSeconds
     ) {
-        this.mode = normalizeMode(mode);
-        this.enabled = enabled;
-        this.apiKey = apiKey == null ? "" : apiKey.trim();
-        this.baseUrl = normalizeBaseUrl(baseUrl, this.mode);
-        this.model = normalizeModel(model, this.mode);
-        this.timeout = Duration.ofSeconds(Math.min(120, Math.max(5, timeoutSeconds)));
-        this.lastCloudSuccess = false;
-        this.cloudDimensions = fallback.dimensions();
-        this.lastFailure = "";
+        String normalizedMode = normalizeMode(mode);
+        scopedConfig.set(new ProviderConfig(
+                enabled,
+                normalizedMode,
+                apiKey == null ? "" : apiKey.trim(),
+                normalizeBaseUrl(baseUrl, normalizedMode),
+                normalizeModel(model, normalizedMode),
+                Duration.ofSeconds(Math.min(120, Math.max(5, timeoutSeconds)))
+        ));
+        scopedState.set(ProviderState.initial(fallback.dimensions()));
     }
 
     @Override
     public String providerName() {
-        if (!cloudConfigured()) {
+        ProviderConfig config = currentConfig();
+        ProviderState state = scopedState.get();
+        if (!cloudConfigured(config)) {
             return fallback.providerName();
         }
-        if (lastCloudSuccess) {
-            return mode + ":" + model;
+        if (state.lastCloudSuccess()) {
+            return config.mode() + ":" + config.model();
         }
-        return mode + "-pending";
+        return config.mode() + "-pending";
     }
 
     @Override
     public int dimensions() {
-        return lastCloudSuccess ? cloudDimensions : fallback.dimensions();
+        ProviderState state = scopedState.get();
+        return state.lastCloudSuccess() ? state.cloudDimensions() : fallback.dimensions();
     }
 
     @Override
@@ -93,35 +94,42 @@ public class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvider {
         if (text == null || text.isBlank()) {
             return Map.of();
         }
-        if (!cloudConfigured()) {
-            lastCloudSuccess = false;
+        ProviderConfig config = currentConfig();
+        if (!cloudConfigured(config)) {
+            scopedState.set(ProviderState.initial(fallback.dimensions()));
             return fallback.embed(text);
         }
         try {
             String payload = objectMapper.writeValueAsString(Map.of(
-                    "model", model,
+                    "model", config.model(),
                     "input", text
             ));
-            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + "/embeddings"))
-                    .timeout(timeout)
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(config.baseUrl() + "/embeddings"))
+                    .timeout(config.timeout())
                     .header("Content-Type", "application/json");
-            if (!apiKey.isBlank()) {
-                builder.header("Authorization", "Bearer " + apiKey);
+            if (!config.apiKey().isBlank()) {
+                builder.header("Authorization", "Bearer " + config.apiKey());
             }
             HttpResponse<String> response = httpClient.send(
                     builder.POST(HttpRequest.BodyPublishers.ofString(payload)).build(),
                     HttpResponse.BodyHandlers.ofString()
             );
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                lastCloudSuccess = false;
-                lastFailure = "embedding endpoint returned HTTP " + response.statusCode();
+                scopedState.set(new ProviderState(
+                        false,
+                        fallback.dimensions(),
+                        "embedding endpoint returned HTTP " + response.statusCode()
+                ));
                 return fallback.embed(text);
             }
 
             JsonNode embedding = objectMapper.readTree(response.body()).path("data").path(0).path("embedding");
             if (!embedding.isArray() || embedding.isEmpty()) {
-                lastCloudSuccess = false;
-                lastFailure = "embedding response did not contain data[0].embedding";
+                scopedState.set(new ProviderState(
+                        false,
+                        fallback.dimensions(),
+                        "embedding response did not contain data[0].embedding"
+                ));
                 return fallback.embed(text);
             }
             Map<Integer, Double> vector = new HashMap<>();
@@ -133,45 +141,54 @@ public class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvider {
                 }
                 index++;
             }
-            cloudDimensions = index;
-            lastCloudSuccess = true;
-            lastFailure = "";
+            scopedState.set(new ProviderState(true, index, ""));
             return vector;
         } catch (Exception exception) {
-            lastCloudSuccess = false;
-            lastFailure = exception.getMessage();
+            scopedState.set(new ProviderState(false, fallback.dimensions(), exception.getMessage()));
             return fallback.embed(text);
         }
     }
 
     @Override
     public boolean cloudBacked() {
-        return lastCloudSuccess;
+        return scopedState.get().lastCloudSuccess();
     }
 
     @Override
     public String diagnostic() {
-        if (!cloudConfigured()) {
+        ProviderConfig config = currentConfig();
+        ProviderState state = scopedState.get();
+        if (!cloudConfigured(config)) {
             return "Embedding mode is local; using local hash fallback";
         }
-        if (lastCloudSuccess) {
-            return "OpenAI-compatible embedding active: mode=" + mode
-                    + ", model=" + model
-                    + ", dims=" + cloudDimensions;
+        if (state.lastCloudSuccess()) {
+            return "OpenAI-compatible embedding active: mode=" + config.mode()
+                    + ", model=" + config.model()
+                    + ", dims=" + state.cloudDimensions();
         }
-        if (lastFailure == null || lastFailure.isBlank()) {
-            return "Embedding provider configured but not proven yet: mode=" + mode
-                    + ", model=" + model
-                    + ", baseUrl=" + baseUrl;
+        if (state.lastFailure() == null || state.lastFailure().isBlank()) {
+            return "Embedding provider configured but not proven yet: mode=" + config.mode()
+                    + ", model=" + config.model()
+                    + ", baseUrl=" + config.baseUrl();
         }
-        return "Embedding provider unavailable: " + lastFailure + "; using local hash fallback";
+        return "Embedding provider unavailable: " + state.lastFailure() + "; using local hash fallback";
     }
 
-    private boolean cloudConfigured() {
-        if (!enabled || "local".equals(mode)) {
+    public void clearScopedConfig() {
+        scopedConfig.remove();
+        scopedState.remove();
+    }
+
+    private ProviderConfig currentConfig() {
+        ProviderConfig config = scopedConfig.get();
+        return config == null ? defaultConfig : config;
+    }
+
+    private boolean cloudConfigured(ProviderConfig config) {
+        if (!config.enabled() || "local".equals(config.mode())) {
             return false;
         }
-        return "bge".equals(mode) || !apiKey.isBlank();
+        return "bge".equals(config.mode()) || !config.apiKey().isBlank();
     }
 
     private String normalizeMode(String value) {
@@ -209,5 +226,21 @@ public class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvider {
             case "bge" -> "BAAI/bge-m3";
             default -> "local-hash";
         };
+    }
+
+    private record ProviderConfig(
+            boolean enabled,
+            String mode,
+            String apiKey,
+            String baseUrl,
+            String model,
+            Duration timeout
+    ) {
+    }
+
+    private record ProviderState(boolean lastCloudSuccess, int cloudDimensions, String lastFailure) {
+        private static ProviderState initial(int dimensions) {
+            return new ProviderState(false, dimensions, "");
+        }
     }
 }

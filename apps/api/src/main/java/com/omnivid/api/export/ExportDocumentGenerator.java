@@ -2,9 +2,11 @@ package com.omnivid.api.export;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.omnivid.api.auth.CurrentUserService;
 import com.omnivid.api.common.ApiException;
 import com.omnivid.api.llm.CloudLlmClient;
 import com.omnivid.api.llm.CloudLlmResult;
+import com.omnivid.api.llm.LlmProviderService;
 import com.omnivid.api.summary.SummaryAsset;
 import com.omnivid.api.summary.SummaryRepository;
 import com.omnivid.api.transcript.TranscriptRepository;
@@ -33,6 +35,8 @@ public class ExportDocumentGenerator {
     private final SummaryRepository summaries;
     private final CloudLlmClient llm;
     private final ObjectMapper objectMapper;
+    private final CurrentUserService currentUser;
+    private final LlmProviderService llmProviders;
     private final Map<String, DocumentGeneration> cache = new ConcurrentHashMap<>();
 
     public ExportDocumentGenerator(
@@ -40,13 +44,17 @@ public class ExportDocumentGenerator {
             TranscriptRepository transcripts,
             SummaryRepository summaries,
             CloudLlmClient llm,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            CurrentUserService currentUser,
+            LlmProviderService llmProviders
     ) {
         this.videos = videos;
         this.transcripts = transcripts;
         this.summaries = summaries;
         this.llm = llm;
         this.objectMapper = objectMapper;
+        this.currentUser = currentUser;
+        this.llmProviders = llmProviders;
     }
 
     public DocumentGeneration generate(long videoId, String requestedType) {
@@ -54,7 +62,8 @@ public class ExportDocumentGenerator {
         if (!SUPPORTED_TYPES.contains(summaryType)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Unsupported summary type: " + requestedType);
         }
-        VideoAsset video = videos.findById(videoId)
+        long userId = currentUser.requireUser().id();
+        VideoAsset video = videos.findByIdAndUserId(videoId, userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Video not found"));
         List<TranscriptSegment> segments = transcripts.listByVideoId(videoId);
         SummaryAsset summary = summaries.listByVideoId(videoId).stream()
@@ -71,6 +80,7 @@ public class ExportDocumentGenerator {
             return cached;
         }
 
+        llmProviders.configureActiveForCurrentUser();
         Optional<CloudLlmResult> generated = llm.complete(
                 systemPrompt(summaryType),
                 userPrompt(video, summaryType, outline, segments),

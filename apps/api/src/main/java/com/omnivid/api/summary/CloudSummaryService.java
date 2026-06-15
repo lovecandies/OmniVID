@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnivid.api.llm.CloudLlmClient;
 import com.omnivid.api.llm.CloudLlmResult;
+import com.omnivid.api.llm.LlmProviderService;
 import com.omnivid.api.video.VideoAsset;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,13 +17,16 @@ public class CloudSummaryService {
 
     private final CloudLlmClient llm;
     private final ObjectMapper objectMapper;
+    private final LlmProviderService llmProviders;
 
-    public CloudSummaryService(CloudLlmClient llm, ObjectMapper objectMapper) {
+    public CloudSummaryService(CloudLlmClient llm, ObjectMapper objectMapper, LlmProviderService llmProviders) {
         this.llm = llm;
         this.objectMapper = objectMapper;
+        this.llmProviders = llmProviders;
     }
 
     public Optional<CloudSummaryBundle> generate(VideoAsset video, List<String> timedTranscriptLines) {
+        llmProviders.configureActiveForUserId(video.userId());
         if (!llm.available() || timedTranscriptLines.isEmpty()) {
             return Optional.empty();
         }

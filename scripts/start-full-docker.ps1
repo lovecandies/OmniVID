@@ -21,14 +21,14 @@ Stop-DevProcessOnPort 5174
 Write-Host "Building and starting full OmniVid stack..."
 docker compose -f $compose --profile app up -d --build
 
-Write-Host "Waiting for API runtime..."
+Write-Host "Waiting for API health..."
 $deadline = (Get-Date).AddSeconds(180)
 do {
     Start-Sleep -Seconds 5
     try {
-        $runtime = Invoke-RestMethod "http://localhost:8080/api/runtime/status" -TimeoutSec 5
-        if ($runtime.profile -like "*docker*" -and $runtime.database.connected -and $runtime.redis.connected -and $runtime.processing.connected) {
-            Write-Host "API ready: db=$($runtime.database.product), redis=$($runtime.redis.connected), processing=$($runtime.processing.mode), trace=$($runtime.observability.traceHeader)"
+        $health = Invoke-RestMethod "http://localhost:8080/api/health" -TimeoutSec 5
+        if ($health.status -eq "UP") {
+            Write-Host "API health ready: $($health.status)"
             break
         }
     } catch {

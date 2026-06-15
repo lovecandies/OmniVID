@@ -2,6 +2,7 @@ package com.omnivid.api.llm;
 
 public record LlmProviderConfig(
         long id,
+        long userId,
         String providerName,
         String baseUrl,
         String model,

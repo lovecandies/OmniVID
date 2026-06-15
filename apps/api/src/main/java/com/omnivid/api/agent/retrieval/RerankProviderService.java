@@ -1,12 +1,11 @@
 package com.omnivid.api.agent.retrieval;
 
 import com.omnivid.api.common.ApiException;
+import com.omnivid.api.auth.CurrentUserService;
 import com.omnivid.api.security.ProviderSecretService;
 import com.omnivid.api.transcript.TranscriptSegment;
 import java.util.List;
 import java.util.Locale;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -15,29 +14,28 @@ public class RerankProviderService {
     private final RerankProviderRepository providers;
     private final AgentRerankService rerankService;
     private final ProviderSecretService secrets;
+    private final CurrentUserService currentUser;
 
     public RerankProviderService(
             RerankProviderRepository providers,
             AgentRerankService rerankService,
-            ProviderSecretService secrets
+            ProviderSecretService secrets,
+            CurrentUserService currentUser
     ) {
         this.providers = providers;
         this.rerankService = rerankService;
         this.secrets = secrets;
-    }
-
-    @EventListener(ApplicationReadyEvent.class)
-    public void loadActiveProvider() {
-        providers.findActive().ifPresent(this::configureProvider);
+        this.currentUser = currentUser;
     }
 
     public List<RerankProviderResponse> list() {
-        return providers.list().stream()
+        return providers.list(currentUserId()).stream()
                 .map(RerankProviderResponse::from)
                 .toList();
     }
 
     public RerankProviderResponse saveAndActivate(RerankProviderSaveRequest request) {
+        long userId = currentUserId();
         String mode = normalizeMode(request.mode());
         String apiKey = request.apiKey() == null ? "" : request.apiKey().trim();
         String baseUrl = normalizeBaseUrl(requireValue(request.baseUrl(), "Rerank Base URL is required"));
@@ -47,6 +45,7 @@ public class RerankProviderService {
         int timeoutSeconds = timeoutSeconds(request.timeoutSeconds());
 
         RerankProviderConfig saved = providers.save(
+                userId,
                 providerName,
                 mode,
                 baseUrl,
@@ -56,27 +55,29 @@ public class RerankProviderService {
                 mask(apiKey),
                 timeoutSeconds
         );
-        providers.activate(saved.id());
-        RerankProviderConfig active = providers.findById(saved.id()).orElseThrow();
+        providers.activate(userId, saved.id());
+        RerankProviderConfig active = providers.findById(userId, saved.id()).orElseThrow();
         configureProvider(active);
         return RerankProviderResponse.from(active);
     }
 
     public RerankProviderResponse activate(long id) {
-        RerankProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        RerankProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Rerank provider not found"));
-        providers.activate(provider.id());
-        RerankProviderConfig active = providers.findById(provider.id()).orElseThrow();
+        providers.activate(userId, provider.id());
+        RerankProviderConfig active = providers.findById(userId, provider.id()).orElseThrow();
         configureProvider(active);
         return RerankProviderResponse.from(active);
     }
 
     public RerankProviderResponse rotateKey(long id, RerankProviderRotateRequest request) {
-        RerankProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        RerankProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Rerank provider not found"));
         String apiKey = request.apiKey() == null ? "" : request.apiKey().trim();
-        providers.updateKey(provider.id(), secrets.encrypt(apiKey), mask(apiKey));
-        RerankProviderConfig updated = providers.findById(provider.id()).orElseThrow();
+        providers.updateKey(userId, provider.id(), secrets.encrypt(apiKey), mask(apiKey));
+        RerankProviderConfig updated = providers.findById(userId, provider.id()).orElseThrow();
         if (updated.active() && updated.enabled()) {
             configureProvider(updated);
         }
@@ -84,26 +85,29 @@ public class RerankProviderService {
     }
 
     public RerankProviderResponse disable(long id) {
-        RerankProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        RerankProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Rerank provider not found"));
-        providers.disable(provider.id());
+        providers.disable(userId, provider.id());
         if (provider.active()) {
             rerankService.configure(true, "local", "", "/rerank", "", "", provider.timeoutSeconds());
         }
-        return RerankProviderResponse.from(providers.findById(provider.id()).orElseThrow());
+        return RerankProviderResponse.from(providers.findById(userId, provider.id()).orElseThrow());
     }
 
     public void delete(long id) {
-        RerankProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        RerankProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Rerank provider not found"));
-        providers.delete(provider.id());
+        providers.delete(userId, provider.id());
         if (provider.active()) {
             rerankService.configure(true, "local", "", "/rerank", "", "", provider.timeoutSeconds());
         }
     }
 
     public RerankProviderTestResponse testActive() {
-        RerankProviderConfig active = providers.findActive()
+        long userId = currentUserId();
+        RerankProviderConfig active = providers.findActive(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "No active rerank provider"));
         configureProvider(active);
         List<AgentRerankService.RerankInput> inputs = List.of(
@@ -123,8 +127,15 @@ public class RerankProviderService {
         rerankService.rerank("Java Redis RAG", inputs, 2);
         boolean success = rerankService.remoteActive();
         String message = rerankService.diagnostic();
-        providers.updateTestResult(active.id(), success ? "OK" : "FAILED", message);
+        providers.updateTestResult(userId, active.id(), success ? "OK" : "FAILED", message);
         return new RerankProviderTestResponse(success, message, rerankService.providerName(), active.model());
+    }
+
+    public void configureActiveForCurrentUser() {
+        providers.findActive(currentUserId()).ifPresentOrElse(
+                this::configureProvider,
+                () -> rerankService.configure(true, "local", "", "/rerank", "", "", 15)
+        );
     }
 
     private void configureProvider(RerankProviderConfig provider) {
@@ -137,6 +148,10 @@ public class RerankProviderService {
                 provider.model(),
                 provider.timeoutSeconds()
         );
+    }
+
+    private long currentUserId() {
+        return currentUser.requireUser().id();
     }
 
     private String normalizeMode(String value) {

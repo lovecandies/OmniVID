@@ -72,7 +72,7 @@ public class ProcessingJobRepository {
                 .optional();
     }
 
-    public List<FailedJobResponse> listFailed(int limit) {
+    public List<FailedJobResponse> listFailed(long userId, int limit) {
         return jdbc.sql("""
                 SELECT j.id AS job_id,
                        j.video_id,
@@ -85,6 +85,7 @@ public class ProcessingJobRepository {
                 FROM processing_job j
                 JOIN video_asset v ON v.id = j.video_id
                 WHERE j.status = 'FAILED'
+                  AND v.user_id = :userId
                   AND j.id = (
                       SELECT latest.id
                       FROM processing_job latest
@@ -95,6 +96,7 @@ public class ProcessingJobRepository {
                 ORDER BY j.updated_at DESC, j.id DESC
                 LIMIT :limit
                 """)
+                .param("userId", userId)
                 .param("limit", Math.max(1, Math.min(limit, 20)))
                 .query(this::mapFailed)
                 .list();

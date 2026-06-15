@@ -8,6 +8,7 @@ public record VideoAsset(
         String md5,
         String originalName,
         String storagePath,
+        long fileSizeBytes,
         long durationMs,
         String status,
         Instant createdAt,

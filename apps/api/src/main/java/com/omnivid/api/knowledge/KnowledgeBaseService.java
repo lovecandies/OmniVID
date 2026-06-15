@@ -1,6 +1,8 @@
 package com.omnivid.api.knowledge;
 
 import com.omnivid.api.common.ApiException;
+import com.omnivid.api.auth.CurrentUserService;
+import com.omnivid.api.quota.UserQuotaService;
 import com.omnivid.api.transcript.TranscriptRepository;
 import com.omnivid.api.transcript.TranscriptSegment;
 import com.omnivid.api.video.VideoService;
@@ -19,35 +21,43 @@ public class KnowledgeBaseService {
     private final KnowledgeBaseRepository knowledgeBases;
     private final VideoService videos;
     private final TranscriptRepository transcripts;
+    private final CurrentUserService currentUser;
+    private final UserQuotaService quotas;
 
     public KnowledgeBaseService(
             KnowledgeBaseRepository knowledgeBases,
             VideoService videos,
-            TranscriptRepository transcripts
+            TranscriptRepository transcripts,
+            CurrentUserService currentUser,
+            UserQuotaService quotas
     ) {
         this.knowledgeBases = knowledgeBases;
         this.videos = videos;
         this.transcripts = transcripts;
+        this.currentUser = currentUser;
+        this.quotas = quotas;
     }
 
     public List<KnowledgeBase> list() {
-        return knowledgeBases.list();
+        return knowledgeBases.list(currentUserId());
     }
 
     public KnowledgeBase create(KnowledgeBaseCreateRequest request) {
         String name = requireName(request.name());
         String description = request.description() == null ? "" : request.description().trim();
-        return knowledgeBases.create(name, description);
+        long userId = currentUserId();
+        quotas.requireCanCreateKnowledgeBase(userId);
+        return knowledgeBases.create(userId, name, description);
     }
 
     public KnowledgeBaseDetailResponse detail(long id) {
         KnowledgeBase knowledgeBase = requireKnowledgeBase(id);
-        return new KnowledgeBaseDetailResponse(knowledgeBase, knowledgeBases.videos(id));
+        return new KnowledgeBaseDetailResponse(knowledgeBase, knowledgeBases.videos(currentUserId(), id));
     }
 
     public KnowledgeBaseCoverageResponse coverage(long id) {
         KnowledgeBase knowledgeBase = requireKnowledgeBase(id);
-        List<VideoAsset> assets = knowledgeBases.videos(id);
+        List<VideoAsset> assets = knowledgeBases.videos(currentUserId(), id);
         List<KnowledgeBaseCoverageVideoResponse> rows = assets.stream()
                 .map(video -> {
                     List<TranscriptSegment> videoTranscripts = transcripts.listByVideoId(video.id());
@@ -85,7 +95,7 @@ public class KnowledgeBaseService {
 
     public KnowledgeBaseCompareResponse compare(long id, KnowledgeBaseCompareRequest request) {
         KnowledgeBase knowledgeBase = requireKnowledgeBase(id);
-        List<VideoAsset> assets = knowledgeBases.videos(id);
+        List<VideoAsset> assets = knowledgeBases.videos(currentUserId(), id);
         if (assets.size() < 2) {
             throw new ApiException(HttpStatus.CONFLICT, "At least two videos are required for knowledge base comparison");
         }
@@ -127,30 +137,33 @@ public class KnowledgeBaseService {
     }
 
     public KnowledgeBaseDetailResponse addVideo(long id, KnowledgeBaseVideoRequest request) {
+        long userId = currentUserId();
         requireKnowledgeBase(id);
         videos.requireVideo(request.videoId());
-        knowledgeBases.addVideo(id, request.videoId());
+        knowledgeBases.addVideo(userId, id, request.videoId());
         return detail(id);
     }
 
     public KnowledgeBaseDetailResponse removeVideo(long id, long videoId) {
+        long userId = currentUserId();
         requireKnowledgeBase(id);
-        knowledgeBases.removeVideo(id, videoId);
+        knowledgeBases.removeVideo(userId, id, videoId);
         return detail(id);
     }
 
     public void delete(long id) {
+        long userId = currentUserId();
         requireKnowledgeBase(id);
-        knowledgeBases.delete(id);
+        knowledgeBases.delete(userId, id);
     }
 
     public List<Long> videoIds(long id) {
         requireKnowledgeBase(id);
-        return knowledgeBases.videoIds(id);
+        return knowledgeBases.videoIds(currentUserId(), id);
     }
 
     public KnowledgeBase requireKnowledgeBase(long id) {
-        return knowledgeBases.findById(id)
+        return knowledgeBases.findById(currentUserId(), id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Knowledge base not found"));
     }
 
@@ -274,5 +287,9 @@ public class KnowledgeBaseService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Knowledge base name is required");
         }
         return value.trim();
+    }
+
+    private long currentUserId() {
+        return currentUser.requireUser().id();
     }
 }

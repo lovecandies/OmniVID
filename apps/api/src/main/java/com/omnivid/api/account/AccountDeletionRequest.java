@@ -1,0 +1,9 @@
+package com.omnivid.api.account;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
+public record AccountDeletionRequest(
+        @NotBlank @Size(min = 8, max = 128) String password
+) {
+}

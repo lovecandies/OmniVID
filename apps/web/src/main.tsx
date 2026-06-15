@@ -16,6 +16,8 @@ import {
   History,
   KeyRound,
   Link2,
+  LogIn,
+  LogOut,
   MessageSquareText,
   PencilLine,
   Play,
@@ -26,13 +28,19 @@ import {
   ShieldCheck,
   Sparkles,
   UploadCloud,
+  UserRound,
   Video,
   Zap,
 } from "lucide-react";
 import "./styles.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
+const API_BASE = import.meta.env.VITE_API_BASE_URL?.trim() || (import.meta.env.PROD ? "" : "http://localhost:8080");
 const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 
 type PipelineStep = {
   label: string;
@@ -85,6 +93,103 @@ type SseInspectState = {
   disconnectCount: number;
   lastEventAt: string;
   lastSnapshot: ProgressSnapshot | null;
+};
+
+type AuthUser = {
+  id: number;
+  email: string;
+  nickname: string;
+  emailVerified?: boolean;
+  disabled?: boolean;
+};
+
+type AuthMeResponse = {
+  authenticated: boolean;
+  user: AuthUser | null;
+};
+
+type AuthState = {
+  loaded: boolean;
+  authenticated: boolean;
+  user: AuthUser | null;
+};
+
+type AuthFormMode = "login" | "register";
+
+type AuthFormState = {
+  email: string;
+  password: string;
+  nickname: string;
+};
+
+type AccountQuota = {
+  userId: number;
+  storageBytes: number;
+  maxStorageBytes: number;
+  videoCount: number;
+  maxVideoCount: number;
+  knowledgeBaseCount: number;
+  maxKnowledgeBaseCount: number;
+};
+
+type AccountSession = {
+  sessionId: string;
+  principalName: string;
+  createdAt: string;
+  lastAccessedAt: string;
+  maxInactiveIntervalSeconds: number;
+  current: boolean;
+};
+
+type AccountTokenResult = {
+  purpose: string;
+  message: string;
+  expiresAt: string;
+  devToken?: string | null;
+};
+
+type PasswordChangeResult = {
+  userId: number;
+  message: string;
+};
+
+type AdminUserSummary = {
+  id: number;
+  email: string;
+  nickname: string;
+  emailVerified: boolean;
+  disabled: boolean;
+  videoCount: number;
+  maxVideoCount: number;
+  storageBytes: number;
+  maxStorageBytes: number;
+  knowledgeBaseCount: number;
+  maxKnowledgeBaseCount: number;
+  createdAt: string;
+};
+
+type AdminTask = {
+  jobId: number;
+  videoId: number;
+  userId: number;
+  userEmail: string;
+  originalName: string;
+  currentStep: string;
+  status: string;
+  progress: number;
+  retryCount: number;
+  errorMessage?: string | null;
+  updatedAt: string;
+};
+
+type AdminResourceUsage = {
+  userCount: number;
+  activeUserCount: number;
+  videoCount: number;
+  storageBytes: number;
+  knowledgeBaseCount: number;
+  failedJobCount: number;
+  runningJobCount: number;
 };
 
 type ApiTranscriptSegment = {
@@ -725,6 +830,37 @@ const fallbackTranscript: ApiTranscriptSegment = {
   content: "点击上传后，这里会显示后端返回的时间轴字幕。",
 };
 
+class ApiRequestError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+  }
+}
+
+let csrfToken = "";
+
+async function requestHeaders(init?: RequestInit, json = false) {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const headers = new Headers(init?.headers);
+  if (json) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    if (!csrfToken) {
+      const response = await fetch(`${API_BASE}/api/auth/csrf`, { credentials: "include" });
+      if (!response.ok) {
+        return throwApiError("/api/auth/csrf", response);
+      }
+      csrfToken = ((await response.json()) as { token: string }).token;
+    }
+    headers.set("X-XSRF-TOKEN", csrfToken);
+  }
+  return headers;
+}
+
 async function readApiError(response: Response) {
   const text = await response.text();
   if (!text) {
@@ -747,53 +883,68 @@ async function readApiError(response: Response) {
   }
 }
 
+async function throwApiError(path: string, response: Response): Promise<never> {
+  const message = await readApiError(response);
+  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+    window.dispatchEvent(new Event("omnivid-auth-required"));
+  }
+  throw new ApiRequestError(response.status, message || `Request failed: ${response.status}`);
+}
+
 async function apiJsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = await requestHeaders(init, true);
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
     ...init,
+    credentials: "include",
+    headers,
   });
 
   if (!response.ok) {
-    const message = await readApiError(response);
-    throw new Error(message || `Request failed: ${response.status}`);
+    return throwApiError(path, response);
   }
 
   return response.json() as Promise<T>;
 }
 
 async function apiFormRequest<T>(path: string, body: FormData): Promise<T> {
+  const init = { method: "POST" };
   const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
+    ...init,
+    credentials: "include",
+    headers: await requestHeaders(init),
     body,
   });
 
   if (!response.ok) {
-    const message = await readApiError(response);
-    throw new Error(message || `Request failed: ${response.status}`);
+    return throwApiError(path, response);
   }
 
   return response.json() as Promise<T>;
 }
 
 async function apiEmptyRequest(path: string, init?: RequestInit) {
-  const response = await fetch(`${API_BASE}${path}`, init);
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    credentials: "include",
+    headers: await requestHeaders(init),
+  });
   if (!response.ok) {
-    const message = await readApiError(response);
-    throw new Error(message || `Request failed: ${response.status}`);
+    return throwApiError(path, response);
   }
 }
 
 async function downloadVideoExport(videoId: number, summaryType: string, format: ExportFormat) {
-  const response = await fetch(`${API_BASE}/api/videos/${videoId}/exports`, {
+  const init = {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ summaryType, format }),
+  };
+  const response = await fetch(`${API_BASE}/api/videos/${videoId}/exports`, {
+    ...init,
+    credentials: "include",
+    headers: await requestHeaders(init, true),
   });
   if (!response.ok) {
-    throw new Error(await readApiError(response));
+    return throwApiError(`/api/videos/${videoId}/exports`, response);
   }
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -813,6 +964,101 @@ async function downloadVideoExport(videoId: number, summaryType: string, format:
     model: response.headers.get("X-OmniVid-Model") ?? "unknown",
     filename,
   };
+}
+
+function getCurrentUser() {
+  return apiJsonRequest<AuthMeResponse>("/api/auth/me");
+}
+
+function loginUser(form: AuthFormState) {
+  return apiJsonRequest<AuthMeResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({
+      email: form.email.trim(),
+      password: form.password,
+    }),
+  });
+}
+
+function registerUser(form: AuthFormState) {
+  return apiJsonRequest<AuthMeResponse>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      email: form.email.trim(),
+      password: form.password,
+      nickname: form.nickname.trim(),
+    }),
+  });
+}
+
+function logoutUser() {
+  return apiJsonRequest<AuthMeResponse>("/api/auth/logout", {
+    method: "POST",
+  });
+}
+
+function getAccountQuota() {
+  return apiJsonRequest<AccountQuota>("/api/account/quota");
+}
+
+function listAccountSessions() {
+  return apiJsonRequest<AccountSession[]>("/api/account/sessions");
+}
+
+function requestEmailVerification() {
+  return apiJsonRequest<AccountTokenResult>("/api/account/email/verification/request", {
+    method: "POST",
+  });
+}
+
+function confirmEmailVerification(token: string) {
+  return apiJsonRequest<PasswordChangeResult>("/api/account/email/verification/confirm", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+function changeAccountPassword(currentPassword: string, newPassword: string) {
+  return apiJsonRequest<PasswordChangeResult>("/api/account/password/change", {
+    method: "POST",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
+function deleteAccountSession(sessionId: string) {
+  return apiEmptyRequest(`/api/account/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  });
+}
+
+function getAccountExport() {
+  return apiJsonRequest<Record<string, unknown>>("/api/account/export");
+}
+
+function deleteAccount(password: string) {
+  return apiJsonRequest<{ userId: number; deleted: boolean; invalidatedSessions: number }>("/api/account", {
+    method: "DELETE",
+    body: JSON.stringify({ password }),
+  });
+}
+
+function listAdminUsers() {
+  return apiJsonRequest<AdminUserSummary[]>("/api/admin/users");
+}
+
+function listAdminFailures() {
+  return apiJsonRequest<AdminTask[]>("/api/admin/tasks/failures");
+}
+
+function getAdminResources() {
+  return apiJsonRequest<AdminResourceUsage>("/api/admin/resources");
+}
+
+function markAdminTaskFailed(jobId: number, message: string) {
+  return apiJsonRequest<AdminTask>(`/api/admin/tasks/${jobId}/mark-failed`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
 }
 
 async function calculateFileMd5(file: File) {
@@ -969,12 +1215,14 @@ async function removeKnowledgeBaseVideo(knowledgeBaseId: number, videoId: number
 }
 
 async function deleteKnowledgeBase(knowledgeBaseId: number) {
+  const init = { method: "DELETE" };
   const response = await fetch(`${API_BASE}/api/knowledge-bases/${knowledgeBaseId}`, {
-    method: "DELETE",
+    ...init,
+    credentials: "include",
+    headers: await requestHeaders(init),
   });
   if (!response.ok) {
-    const message = await readApiError(response);
-    throw new Error(message || `Request failed: ${response.status}`);
+    return throwApiError(`/api/knowledge-bases/${knowledgeBaseId}`, response);
   }
 }
 
@@ -1198,12 +1446,14 @@ async function setTermGlossaryEnabled(entryId: number, enabled: boolean) {
 }
 
 async function deleteTermGlossary(entryId: number) {
+  const init = { method: "DELETE" };
   const response = await fetch(`${API_BASE}/api/asr/glossary/${entryId}`, {
-    method: "DELETE",
+    ...init,
+    credentials: "include",
+    headers: await requestHeaders(init),
   });
   if (!response.ok) {
-    const message = await readApiError(response);
-    throw new Error(message || `Request failed: ${response.status}`);
+    return throwApiError(`/api/asr/glossary/${entryId}`, response);
   }
 }
 
@@ -1214,6 +1464,7 @@ async function rebuildVectorIndex() {
 }
 
 function App() {
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [activeSegment, setActiveSegment] = useState(0);
   const [agentMode, setAgentMode] = useState<AgentMode>("video");
   const [rightWorkspaceTab, setRightWorkspaceTab] = useState<RightWorkspaceTab>("agent");
@@ -1326,10 +1577,34 @@ function App() {
   const [activatingRerankId, setActivatingRerankId] = useState<number | null>(null);
   const [diagnosticsTab, setDiagnosticsTab] = useState<DiagnosticsTab>("runtime");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [llmOpen, setLlmOpen] = useState(false);
   const [embeddingOpen, setEmbeddingOpen] = useState(false);
   const [rerankOpen, setRerankOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [accountQuota, setAccountQuota] = useState<AccountQuota | null>(null);
+  const [accountSessions, setAccountSessions] = useState<AccountSession[]>([]);
+  const [accountStatus, setAccountStatus] = useState("");
+  const [emailVerificationToken, setEmailVerificationToken] = useState("");
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState("");
+  const [adminUsers, setAdminUsers] = useState<AdminUserSummary[]>([]);
+  const [adminFailures, setAdminFailures] = useState<AdminTask[]>([]);
+  const [adminResources, setAdminResources] = useState<AdminResourceUsage | null>(null);
+  const [adminStatus, setAdminStatus] = useState("");
+  const [auth, setAuth] = useState<AuthState>({
+    loaded: false,
+    authenticated: false,
+    user: null,
+  });
+  const [authMode, setAuthMode] = useState<AuthFormMode>("login");
+  const [authForm, setAuthForm] = useState<AuthFormState>({
+    email: "",
+    password: "",
+    nickname: "",
+  });
+  const [authStatus, setAuthStatus] = useState("");
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceState>({
     video: null,
@@ -1346,6 +1621,27 @@ function App() {
     [messages],
   );
 
+  useEffect(() => {
+    const captureInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const clearInstallPrompt = () => setInstallPrompt(null);
+    window.addEventListener("beforeinstallprompt", captureInstallPrompt);
+    window.addEventListener("appinstalled", clearInstallPrompt);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
+      window.removeEventListener("appinstalled", clearInstallPrompt);
+    };
+  }, []);
+
+  async function handleInstallPwa() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+  }
+
   function resetTranscriptSearch() {
     setTranscriptSearchQuery("");
     setTranscriptSearchResults([]);
@@ -1358,20 +1654,290 @@ function App() {
     setTextRepairStatus("");
   }
 
+  function resetAuthenticatedWorkspace() {
+    setActiveSegment(0);
+    setAgentMode("video");
+    setRightWorkspaceTab("agent");
+    setQuery("");
+    setMessages(initialMessages);
+    setError("");
+    setVideoUrl("");
+    setPlaybackMs(0);
+    setVideos([]);
+    setFailedJobs([]);
+    setMysqlExplain([]);
+    setRedisInspect(null);
+    setThreadPoolInspect(null);
+    setVectorIndexInspect(null);
+    setAsrDiagnostic(null);
+    setOcrQuality(null);
+    setAgentContext(null);
+    setKnowledgeBases([]);
+    setActiveKnowledgeBaseId(null);
+    setActiveKnowledgeBaseDetail(null);
+    setKnowledgeBaseCoverage(null);
+    setKnowledgeBaseCompareReport(null);
+    setTranscriptVersions([]);
+    setTranscriptVersionDetail(null);
+    setTermGlossary([]);
+    setAccountQuota(null);
+    setAccountSessions([]);
+    setAccountStatus("");
+    setEmailVerificationToken("");
+    setPasswordForm({ currentPassword: "", newPassword: "" });
+    setDeleteAccountPassword("");
+    setAdminUsers([]);
+    setAdminFailures([]);
+    setAdminResources(null);
+    setAdminStatus("");
+    setAccountOpen(false);
+    setDiagnosticsOpen(false);
+    setLlmOpen(false);
+    setEmbeddingOpen(false);
+    setRerankOpen(false);
+    setLibraryOpen(false);
+    setWorkspace({
+      video: null,
+      job: null,
+      transcripts: [],
+      summaries: [],
+      deduplicated: null,
+    });
+  }
+
+  async function refreshAuth() {
+    try {
+      const current = await getCurrentUser();
+      setAuth({
+        loaded: true,
+        authenticated: current.authenticated,
+        user: current.user,
+      });
+      if (!current.authenticated) {
+        resetAuthenticatedWorkspace();
+      }
+    } catch (exception) {
+      setAuth({
+        loaded: true,
+        authenticated: false,
+        user: null,
+      });
+      resetAuthenticatedWorkspace();
+      setAuthStatus(exception instanceof Error ? exception.message : "登录状态检查失败");
+    }
+  }
+
+  async function refreshProtectedWorkbench() {
+    await Promise.all([
+      refreshVideos(),
+      refreshFailedJobs(),
+      refreshMysqlExplain(),
+      refreshRedisInspect(),
+      refreshThreadPoolInspect(),
+      refreshVectorIndexInspect(),
+      refreshLlmConfig(),
+      refreshEmbeddingProviders(),
+      refreshRerankProviders(),
+      refreshKnowledgeBases(),
+      refreshTermGlossary(),
+    ]);
+  }
+
+  async function refreshAccountData() {
+    try {
+      const [quota, sessions] = await Promise.all([getAccountQuota(), listAccountSessions()]);
+      setAccountQuota(quota);
+      setAccountSessions(sessions);
+    } catch (exception) {
+      setAccountStatus(exception instanceof Error ? exception.message : "账号信息加载失败");
+    }
+
+    try {
+      const [resources, users, failures] = await Promise.all([
+        getAdminResources(),
+        listAdminUsers(),
+        listAdminFailures(),
+      ]);
+      setAdminResources(resources);
+      setAdminUsers(users);
+      setAdminFailures(failures);
+      setAdminStatus("");
+    } catch {
+      setAdminResources(null);
+      setAdminUsers([]);
+      setAdminFailures([]);
+      setAdminStatus("管理员控制台需要 ADMIN 权限。");
+    }
+  }
+
   useEffect(() => {
-    refreshVideos();
-    refreshFailedJobs();
-    refreshMysqlExplain();
-    refreshRedisInspect();
-    refreshThreadPoolInspect();
-    refreshVectorIndexInspect();
-    refreshLlmConfig();
-    refreshEmbeddingProviders();
-    refreshRerankProviders();
-    refreshKnowledgeBases();
+    refreshAuth();
     refreshRuntimeStatus();
-    refreshTermGlossary();
   }, []);
+
+  useEffect(() => {
+    const handleAuthRequired = () => {
+      setAuth({
+        loaded: true,
+        authenticated: false,
+        user: null,
+      });
+      resetAuthenticatedWorkspace();
+      setAuthStatus("登录状态已过期，请重新登录。");
+    };
+    window.addEventListener("omnivid-auth-required", handleAuthRequired);
+    return () => window.removeEventListener("omnivid-auth-required", handleAuthRequired);
+  }, []);
+
+  useEffect(() => {
+    if (auth.loaded && auth.authenticated) {
+      refreshProtectedWorkbench();
+    }
+  }, [auth.loaded, auth.authenticated]);
+
+  useEffect(() => {
+    if (accountOpen && auth.authenticated) {
+      refreshAccountData();
+    }
+  }, [accountOpen, auth.authenticated]);
+
+  async function handleAuthSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsAuthenticating(true);
+    setAuthStatus("");
+    try {
+      const next = authMode === "login"
+        ? await loginUser(authForm)
+        : await registerUser(authForm);
+      setAuth({
+        loaded: true,
+        authenticated: next.authenticated,
+        user: next.user,
+      });
+      setAuthForm((current) => ({
+        ...current,
+        password: "",
+        nickname: authMode === "register" ? "" : current.nickname,
+      }));
+      setAuthStatus(authMode === "login" ? "登录成功，工作台已接通。" : "注册成功，已创建独立会话。");
+    } catch (exception) {
+      setAuthStatus(exception instanceof Error ? exception.message : "认证失败");
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
+  async function handleLogout() {
+    setIsAuthenticating(true);
+    setAuthStatus("");
+    try {
+      await logoutUser();
+    } catch {
+      // 本地直接清空会话视图，后端 session 下次请求仍会重新校验。
+    } finally {
+      setAuth({
+        loaded: true,
+        authenticated: false,
+        user: null,
+      });
+      resetAuthenticatedWorkspace();
+      setAuthStatus("已退出登录。");
+      setIsAuthenticating(false);
+    }
+  }
+
+  async function handleRequestEmailVerification() {
+    setAccountStatus("正在生成邮箱验证 Token...");
+    try {
+      const result = await requestEmailVerification();
+      setEmailVerificationToken(result.devToken ?? "");
+      setAccountStatus(result.devToken ? `开发 Token 已生成：${result.devToken}` : result.message);
+      await refreshAuth();
+      await refreshAccountData();
+    } catch (exception) {
+      setAccountStatus(exception instanceof Error ? exception.message : "邮箱验证请求失败");
+    }
+  }
+
+  async function handleConfirmEmailVerification() {
+    if (!emailVerificationToken.trim()) return;
+    setAccountStatus("正在确认邮箱验证...");
+    try {
+      const result = await confirmEmailVerification(emailVerificationToken.trim());
+      setAccountStatus(result.message);
+      setEmailVerificationToken("");
+      await refreshAuth();
+      await refreshAccountData();
+    } catch (exception) {
+      setAccountStatus(exception instanceof Error ? exception.message : "邮箱验证失败");
+    }
+  }
+
+  async function handleChangePassword() {
+    if (!passwordForm.currentPassword || !passwordForm.newPassword) return;
+    setAccountStatus("正在修改密码...");
+    try {
+      const result = await changeAccountPassword(passwordForm.currentPassword, passwordForm.newPassword);
+      setPasswordForm({ currentPassword: "", newPassword: "" });
+      setAccountStatus(result.message);
+    } catch (exception) {
+      setAccountStatus(exception instanceof Error ? exception.message : "修改密码失败");
+    }
+  }
+
+  async function handleDeleteSession(sessionId: string) {
+    setAccountStatus("正在移除登录设备...");
+    try {
+      await deleteAccountSession(sessionId);
+      setAccountStatus("Session 已失效。");
+      await refreshAccountData();
+    } catch (exception) {
+      setAccountStatus(exception instanceof Error ? exception.message : "Session 删除失败");
+    }
+  }
+
+  async function handleDownloadAccountExport() {
+    setAccountStatus("正在导出账户数据...");
+    try {
+      const data = await getAccountExport();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `omnivid-account-${auth.user?.id ?? "data"}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setAccountStatus("账户数据 JSON 已生成。");
+    } catch (exception) {
+      setAccountStatus(exception instanceof Error ? exception.message : "账户数据导出失败");
+    }
+  }
+
+  async function handleDeleteAccount() {
+    if (!deleteAccountPassword) return;
+    if (!window.confirm("确认注销当前账号？该操作会禁用登录并清空当前会话。")) return;
+    setAccountStatus("正在注销账号...");
+    try {
+      await deleteAccount(deleteAccountPassword);
+      setAuth({ loaded: true, authenticated: false, user: null });
+      resetAuthenticatedWorkspace();
+      setAuthStatus("账号已注销。");
+    } catch (exception) {
+      setAccountStatus(exception instanceof Error ? exception.message : "账号注销失败");
+    }
+  }
+
+  async function handleAdminMarkFailed(jobId: number) {
+    setAdminStatus("正在处理异常任务...");
+    try {
+      await markAdminTaskFailed(jobId, "Marked failed from v2.2 admin console");
+      setAdminStatus("任务已标记为失败。");
+      await refreshAccountData();
+      await refreshFailedJobs();
+    } catch (exception) {
+      setAdminStatus(exception instanceof Error ? exception.message : "管理员任务处理失败");
+    }
+  }
 
   useEffect(() => {
     if (workspace.video) {
@@ -1407,7 +1973,7 @@ function App() {
       status: "opening",
       url: streamUrl,
     }));
-    const source = new EventSource(streamUrl);
+    const source = new EventSource(streamUrl, { withCredentials: true });
     let closed = false;
 
     source.onopen = () => {
@@ -2696,7 +3262,34 @@ function App() {
 
   return (
     <main className="app-shell">
-      <Header />
+      <Header
+        auth={auth}
+        installAvailable={installPrompt !== null}
+        isBusy={isAuthenticating}
+        onInstall={handleInstallPwa}
+        onLogout={handleLogout}
+      />
+      {!auth.loaded ? (
+        <AuthGate
+          form={authForm}
+          isBusy
+          mode={authMode}
+          onChange={setAuthForm}
+          onModeChange={setAuthMode}
+          onSubmit={handleAuthSubmit}
+          status="正在检查登录状态..."
+        />
+      ) : !auth.authenticated ? (
+        <AuthGate
+          form={authForm}
+          isBusy={isAuthenticating}
+          mode={authMode}
+          onChange={setAuthForm}
+          onModeChange={setAuthMode}
+          onSubmit={handleAuthSubmit}
+          status={authStatus}
+        />
+      ) : (
       <section className="workspace-grid">
         <aside className="left-rail" aria-label="上传与任务">
           <UploadPanel
@@ -2750,6 +3343,7 @@ function App() {
 
         <aside className="right-rail" aria-label="总结与问答">
           <HeaderActions
+            accountOpen={accountOpen}
             diagnosticsOpen={diagnosticsOpen}
             embeddingOpen={embeddingOpen}
             embeddingProvider={runtimeStatus?.llm.embeddingProvider}
@@ -2758,8 +3352,17 @@ function App() {
             llmOpen={llmOpen}
             rerankOpen={rerankOpen}
             rerankProvider={runtimeStatus?.llm.rerankProvider}
+            onAccountToggle={() => {
+              setAccountOpen((current) => !current);
+              setLlmOpen(false);
+              setEmbeddingOpen(false);
+              setRerankOpen(false);
+              setDiagnosticsOpen(false);
+              setLibraryOpen(false);
+            }}
             onDiagnosticsToggle={() => {
               setDiagnosticsOpen((current) => !current);
+              setAccountOpen(false);
               setLlmOpen(false);
               setEmbeddingOpen(false);
               setRerankOpen(false);
@@ -2767,6 +3370,7 @@ function App() {
             }}
             onEmbeddingToggle={() => {
               setEmbeddingOpen((current) => !current);
+              setAccountOpen(false);
               setLlmOpen(false);
               setDiagnosticsOpen(false);
               setRerankOpen(false);
@@ -2774,6 +3378,7 @@ function App() {
             }}
             onLibraryToggle={() => {
               setLibraryOpen((current) => !current);
+              setAccountOpen(false);
               setLlmOpen(false);
               setEmbeddingOpen(false);
               setRerankOpen(false);
@@ -2781,6 +3386,7 @@ function App() {
             }}
             onLlmToggle={() => {
               setLlmOpen((current) => !current);
+              setAccountOpen(false);
               setDiagnosticsOpen(false);
               setEmbeddingOpen(false);
               setRerankOpen(false);
@@ -2788,6 +3394,7 @@ function App() {
             }}
             onRerankToggle={() => {
               setRerankOpen((current) => !current);
+              setAccountOpen(false);
               setLlmOpen(false);
               setEmbeddingOpen(false);
               setDiagnosticsOpen(false);
@@ -2795,7 +3402,33 @@ function App() {
             }}
             videosCount={videos.length}
           />
-          {llmOpen ? (
+          {accountOpen ? (
+            <AccountPanel
+              adminFailures={adminFailures}
+              adminResources={adminResources}
+              adminStatus={adminStatus}
+              adminUsers={adminUsers}
+              auth={auth}
+              deletePassword={deleteAccountPassword}
+              emailVerificationToken={emailVerificationToken}
+              onChangeDeletePassword={setDeleteAccountPassword}
+              onChangeEmailVerificationToken={setEmailVerificationToken}
+              onChangePasswordForm={setPasswordForm}
+              onClose={() => setAccountOpen(false)}
+              onConfirmEmailVerification={handleConfirmEmailVerification}
+              onDeleteAccount={handleDeleteAccount}
+              onDeleteSession={handleDeleteSession}
+              onDownloadExport={handleDownloadAccountExport}
+              onMarkTaskFailed={handleAdminMarkFailed}
+              onRefresh={refreshAccountData}
+              onRequestEmailVerification={handleRequestEmailVerification}
+              onSubmitPasswordChange={handleChangePassword}
+              passwordForm={passwordForm}
+              quota={accountQuota}
+              sessions={accountSessions}
+              status={accountStatus}
+            />
+          ) : llmOpen ? (
             <LlmConfigPanel
               activatingProviderId={activatingLlmId}
               config={llmConfig}
@@ -2960,6 +3593,7 @@ function App() {
           )}
         </aside>
       </section>
+      )}
     </main>
   );
 }
@@ -3397,7 +4031,19 @@ const embeddingDefaults: Record<EmbeddingMode, Pick<EmbeddingFormState, "provide
   },
 };
 
-function Header() {
+function Header({
+  auth,
+  installAvailable,
+  isBusy,
+  onInstall,
+  onLogout,
+}: {
+  auth: AuthState;
+  installAvailable: boolean;
+  isBusy: boolean;
+  onInstall: () => void;
+  onLogout: () => void;
+}) {
   return (
     <header className="app-header">
       <div>
@@ -3407,11 +4053,124 @@ function Header() {
         </div>
         <h1>OmniVid 工作台</h1>
       </div>
+      {installAvailable ? (
+        <button className="pwa-install-button" onClick={onInstall} type="button">
+          <Download size={16} />
+          <span>安装应用</span>
+        </button>
+      ) : null}
+      {auth.authenticated && auth.user ? (
+        <div className="header-auth">
+          <span className="auth-avatar">
+            <UserRound size={17} />
+          </span>
+          <span>
+            <strong>{auth.user.nickname}</strong>
+            <small>{auth.user.email}</small>
+          </span>
+          <button className="ghost-icon-button" disabled={isBusy} onClick={onLogout} title="退出登录" type="button">
+            <LogOut size={16} />
+          </button>
+        </div>
+      ) : null}
     </header>
   );
 }
 
+function AuthGate({
+  form,
+  isBusy,
+  mode,
+  onChange,
+  onModeChange,
+  onSubmit,
+  status,
+}: {
+  form: AuthFormState;
+  isBusy: boolean;
+  mode: AuthFormMode;
+  onChange: (form: AuthFormState) => void;
+  onModeChange: (mode: AuthFormMode) => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  status: string;
+}) {
+  const isRegister = mode === "register";
+  return (
+    <section className="auth-gate">
+      <div className="auth-card panel">
+        <div className="panel-title">
+          <LogIn size={17} />
+          <h2>{isRegister ? "创建 OmniVid 账户" : "登录 OmniVid 工作台"}</h2>
+        </div>
+        <p className="auth-copy">
+          v2.1 已启用 Spring Security Session。登录后，浏览器会携带 HttpOnly Session Cookie，后端核心接口才会放行。
+        </p>
+        <div className="auth-switch" role="tablist" aria-label="认证模式">
+          <button
+            className={mode === "login" ? "active" : ""}
+            onClick={() => onModeChange("login")}
+            type="button"
+          >
+            登录
+          </button>
+          <button
+            className={mode === "register" ? "active" : ""}
+            onClick={() => onModeChange("register")}
+            type="button"
+          >
+            注册
+          </button>
+        </div>
+        <form className="auth-form" onSubmit={onSubmit}>
+          <label>
+            邮箱
+            <input
+              autoComplete="email"
+              onChange={(event) => onChange({ ...form, email: event.target.value })}
+              placeholder="you@example.com"
+              required
+              type="email"
+              value={form.email}
+            />
+          </label>
+          {isRegister ? (
+            <label>
+              昵称
+              <input
+                autoComplete="nickname"
+                maxLength={80}
+                onChange={(event) => onChange({ ...form, nickname: event.target.value })}
+                placeholder="面试项目展示名"
+                required
+                type="text"
+                value={form.nickname}
+              />
+            </label>
+          ) : null}
+          <label>
+            密码
+            <input
+              autoComplete={isRegister ? "new-password" : "current-password"}
+              minLength={8}
+              onChange={(event) => onChange({ ...form, password: event.target.value })}
+              placeholder="至少 8 位"
+              required
+              type="password"
+              value={form.password}
+            />
+          </label>
+          <button className="primary-action auth-submit" disabled={isBusy} type="submit">
+            {isBusy ? "处理中..." : isRegister ? "注册并进入" : "登录"}
+          </button>
+        </form>
+        {status ? <p className="auth-status">{status}</p> : null}
+      </div>
+    </section>
+  );
+}
+
 function HeaderActions({
+  accountOpen,
   diagnosticsOpen,
   embeddingOpen,
   embeddingProvider,
@@ -3420,6 +4179,7 @@ function HeaderActions({
   llmOpen,
   rerankOpen,
   rerankProvider,
+  onAccountToggle,
   onDiagnosticsToggle,
   onEmbeddingToggle,
   onLibraryToggle,
@@ -3427,6 +4187,7 @@ function HeaderActions({
   onRerankToggle,
   videosCount,
 }: {
+  accountOpen: boolean;
   diagnosticsOpen: boolean;
   embeddingOpen: boolean;
   embeddingProvider?: string;
@@ -3435,6 +4196,7 @@ function HeaderActions({
   llmOpen: boolean;
   rerankOpen: boolean;
   rerankProvider?: string;
+  onAccountToggle: () => void;
   onDiagnosticsToggle: () => void;
   onEmbeddingToggle: () => void;
   onLibraryToggle: () => void;
@@ -3448,6 +4210,10 @@ function HeaderActions({
 
   return (
     <div className="header-metrics" aria-label="系统指标">
+      <HeaderAccountButton
+        active={accountOpen}
+        onClick={onAccountToggle}
+      />
       <HeaderLlmButton
         active={llmOpen}
         ready={llmReady}
@@ -3476,6 +4242,31 @@ function HeaderActions({
         onClick={onLibraryToggle}
       />
     </div>
+  );
+}
+
+function HeaderAccountButton({
+  active,
+  onClick,
+}: {
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-expanded={active}
+      className={`metric top-popover-trigger account-trigger ${active ? "active" : ""}`}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="metric-icon">
+        <UserRound size={17} />
+      </span>
+      <span>
+        <strong>账号</strong>
+        <small>{active ? "管理中" : "配额 / Session"}</small>
+      </span>
+    </button>
   );
 }
 
@@ -3823,6 +4614,224 @@ function UploadPanel({
       )}
       {error && <p className="inline-error">{error}</p>}
     </section>
+  );
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`;
+}
+
+function AccountPanel({
+  adminFailures,
+  adminResources,
+  adminStatus,
+  adminUsers,
+  auth,
+  deletePassword,
+  emailVerificationToken,
+  onChangeDeletePassword,
+  onChangeEmailVerificationToken,
+  onChangePasswordForm,
+  onClose,
+  onConfirmEmailVerification,
+  onDeleteAccount,
+  onDeleteSession,
+  onDownloadExport,
+  onMarkTaskFailed,
+  onRefresh,
+  onRequestEmailVerification,
+  onSubmitPasswordChange,
+  passwordForm,
+  quota,
+  sessions,
+  status,
+}: {
+  adminFailures: AdminTask[];
+  adminResources: AdminResourceUsage | null;
+  adminStatus: string;
+  adminUsers: AdminUserSummary[];
+  auth: AuthState;
+  deletePassword: string;
+  emailVerificationToken: string;
+  onChangeDeletePassword: (value: string) => void;
+  onChangeEmailVerificationToken: (value: string) => void;
+  onChangePasswordForm: (value: { currentPassword: string; newPassword: string }) => void;
+  onClose: () => void;
+  onConfirmEmailVerification: () => void;
+  onDeleteAccount: () => void;
+  onDeleteSession: (sessionId: string) => void;
+  onDownloadExport: () => void;
+  onMarkTaskFailed: (jobId: number) => void;
+  onRefresh: () => void;
+  onRequestEmailVerification: () => void;
+  onSubmitPasswordChange: () => void;
+  passwordForm: { currentPassword: string; newPassword: string };
+  quota: AccountQuota | null;
+  sessions: AccountSession[];
+  status: string;
+}) {
+  const storagePercent = quota ? Math.min(100, Math.round((quota.storageBytes / quota.maxStorageBytes) * 100)) : 0;
+  const videoPercent = quota ? Math.min(100, Math.round((quota.videoCount / quota.maxVideoCount) * 100)) : 0;
+  const kbPercent = quota ? Math.min(100, Math.round((quota.knowledgeBaseCount / quota.maxKnowledgeBaseCount) * 100)) : 0;
+
+  return (
+    <section className="panel account-panel">
+      <div className="panel-title">
+        <UserRound size={19} />
+        <h2>账号中心</h2>
+        <button className="panel-action" onClick={onRefresh} type="button">刷新</button>
+        <button className="panel-action" onClick={onClose} type="button">收起</button>
+      </div>
+
+      <div className="account-profile">
+        <div>
+          <strong>{auth.user?.nickname ?? "OmniVid User"}</strong>
+          <span>{auth.user?.email}</span>
+        </div>
+        <em className={auth.user?.emailVerified ? "ok" : ""}>
+          {auth.user?.emailVerified ? "邮箱已验证" : "邮箱未验证"}
+        </em>
+      </div>
+
+      <div className="quota-grid">
+        <QuotaCard label="存储" value={`${formatBytes(quota?.storageBytes ?? 0)} / ${formatBytes(quota?.maxStorageBytes ?? 0)}`} percent={storagePercent} />
+        <QuotaCard label="视频" value={`${quota?.videoCount ?? 0} / ${quota?.maxVideoCount ?? 0}`} percent={videoPercent} />
+        <QuotaCard label="知识库" value={`${quota?.knowledgeBaseCount ?? 0} / ${quota?.maxKnowledgeBaseCount ?? 0}`} percent={kbPercent} />
+      </div>
+
+      <div className="account-section">
+        <div className="account-section-title">
+          <ShieldCheck size={16} />
+          <span>邮箱验证</span>
+        </div>
+        <div className="account-inline-form">
+          <button onClick={onRequestEmailVerification} type="button">生成验证 Token</button>
+          <input
+            onChange={(event) => onChangeEmailVerificationToken(event.currentTarget.value)}
+            placeholder="输入邮箱验证 token"
+            value={emailVerificationToken}
+          />
+          <button disabled={!emailVerificationToken.trim()} onClick={onConfirmEmailVerification} type="button">确认</button>
+        </div>
+      </div>
+
+      <div className="account-section">
+        <div className="account-section-title">
+          <KeyRound size={16} />
+          <span>修改密码</span>
+        </div>
+        <div className="account-inline-form">
+          <input
+            onChange={(event) => onChangePasswordForm({ ...passwordForm, currentPassword: event.currentTarget.value })}
+            placeholder="当前密码"
+            type="password"
+            value={passwordForm.currentPassword}
+          />
+          <input
+            onChange={(event) => onChangePasswordForm({ ...passwordForm, newPassword: event.currentTarget.value })}
+            placeholder="新密码"
+            type="password"
+            value={passwordForm.newPassword}
+          />
+          <button disabled={!passwordForm.currentPassword || !passwordForm.newPassword} onClick={onSubmitPasswordChange} type="button">保存</button>
+        </div>
+      </div>
+
+      <div className="account-section">
+        <div className="account-section-title">
+          <Database size={16} />
+          <span>登录设备</span>
+        </div>
+        <div className="account-session-list">
+          {sessions.map((session) => (
+            <div className="account-session-row" key={session.sessionId}>
+              <div>
+                <strong>{session.current ? "当前设备" : "已登录设备"}</strong>
+                <small>{new Date(session.lastAccessedAt).toLocaleString()} · {session.sessionId.slice(0, 10)}</small>
+              </div>
+              <button onClick={() => onDeleteSession(session.sessionId)} type="button">失效</button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="account-danger-row">
+        <button onClick={onDownloadExport} type="button">
+          <Download size={15} />
+          导出我的数据
+        </button>
+        <input
+          onChange={(event) => onChangeDeletePassword(event.currentTarget.value)}
+          placeholder="输入密码后注销"
+          type="password"
+          value={deletePassword}
+        />
+        <button disabled={!deletePassword} onClick={onDeleteAccount} type="button">注销账号</button>
+      </div>
+
+      {status && <p className="account-status">{status}</p>}
+
+      <div className="account-admin-box">
+        <div className="account-section-title">
+          <ShieldCheck size={16} />
+          <span>管理员控制台</span>
+        </div>
+        {adminResources ? (
+          <div className="admin-resource-grid">
+            <Metric icon={<UserRound size={15} />} label="用户" value={`${adminResources.activeUserCount}/${adminResources.userCount}`} />
+            <Metric icon={<Video size={15} />} label="视频" value={`${adminResources.videoCount}`} />
+            <Metric icon={<Database size={15} />} label="存储" value={formatBytes(adminResources.storageBytes)} />
+            <Metric icon={<GitBranch size={15} />} label="失败任务" value={`${adminResources.failedJobCount}`} />
+          </div>
+        ) : (
+          <p className="account-muted">{adminStatus}</p>
+        )}
+        {adminUsers.length ? (
+          <div className="admin-user-list">
+            {adminUsers.slice(0, 5).map((user) => (
+              <div className="admin-user-row" key={user.id}>
+                <span>{user.email}</span>
+                <small>{user.videoCount}/{user.maxVideoCount} videos · {formatBytes(user.storageBytes)}</small>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {adminFailures.length ? (
+          <div className="admin-failure-list">
+            {adminFailures.slice(0, 5).map((task) => (
+              <div className="admin-failure-row" key={task.jobId}>
+                <div>
+                  <strong>job#{task.jobId} · {task.currentStep}</strong>
+                  <small>{task.userEmail} · {task.originalName}</small>
+                </div>
+                <button onClick={() => onMarkTaskFailed(task.jobId)} type="button">处理</button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {adminStatus && adminResources ? <p className="account-status">{adminStatus}</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function QuotaCard({ label, percent, value }: { label: string; percent: number; value: string }) {
+  return (
+    <div className="quota-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <div className="quota-bar">
+        <i style={{ width: `${percent}%` }} />
+      </div>
+    </div>
   );
 }
 
@@ -6422,3 +7431,9 @@ function AgentPanel({
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}

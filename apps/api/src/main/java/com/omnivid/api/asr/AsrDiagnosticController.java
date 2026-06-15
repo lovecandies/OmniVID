@@ -21,6 +21,7 @@ public class AsrDiagnosticController {
 
     @GetMapping("/diagnostics")
     AsrDiagnosticResponse inspect(@PathVariable long videoId) {
+        videos.requireVideo(videoId);
         return diagnostics.inspect(videoId);
     }
 

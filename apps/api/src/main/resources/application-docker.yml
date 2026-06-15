@@ -11,6 +11,11 @@ spring:
       host: localhost
       port: 6379
       timeout: 2s
+  session:
+    store-type: redis
+    redis:
+      namespace: spring:session
+      repository-type: indexed
   sql:
     init:
       mode: always
@@ -29,6 +34,11 @@ omnivid:
     mode: redis
   agent-short-term-memory:
     mode: redis
+  security:
+    login-rate-limit:
+      mode: redis
+    api-rate-limit:
+      mode: redis
   vector-store:
     mode: qdrant
     qdrant:

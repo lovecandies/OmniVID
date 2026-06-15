@@ -1,10 +1,9 @@
 package com.omnivid.api.llm;
 
 import com.omnivid.api.common.ApiException;
+import com.omnivid.api.auth.CurrentUserService;
 import com.omnivid.api.security.ProviderSecretService;
 import java.util.List;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -13,25 +12,28 @@ public class LlmProviderService {
     private final LlmProviderRepository providers;
     private final CloudLlmClient llm;
     private final ProviderSecretService secrets;
+    private final CurrentUserService currentUser;
 
-    public LlmProviderService(LlmProviderRepository providers, CloudLlmClient llm, ProviderSecretService secrets) {
+    public LlmProviderService(
+            LlmProviderRepository providers,
+            CloudLlmClient llm,
+            ProviderSecretService secrets,
+            CurrentUserService currentUser
+    ) {
         this.providers = providers;
         this.llm = llm;
         this.secrets = secrets;
-    }
-
-    @EventListener(ApplicationReadyEvent.class)
-    public void loadActiveProvider() {
-        providers.findActive().ifPresent(this::configureClient);
+        this.currentUser = currentUser;
     }
 
     public List<LlmProviderResponse> list() {
-        return providers.list().stream()
+        return providers.list(currentUserId()).stream()
                 .map(LlmProviderResponse::from)
                 .toList();
     }
 
     public LlmProviderResponse saveAndActivate(LlmProviderSaveRequest request) {
+        long userId = currentUserId();
         String apiKey = requireValue(request.apiKey(), "API Key is required");
         String baseUrl = normalizeBaseUrl(defaultValue(request.baseUrl(), "https://api.deepseek.com/v1"));
         String model = defaultValue(request.model(), "deepseek-chat");
@@ -39,6 +41,7 @@ public class LlmProviderService {
         int timeoutSeconds = timeoutSeconds(request.timeoutSeconds());
 
         LlmProviderConfig saved = providers.save(
+                userId,
                 providerName,
                 baseUrl,
                 model,
@@ -46,27 +49,29 @@ public class LlmProviderService {
                 mask(apiKey),
                 timeoutSeconds
         );
-        providers.activate(saved.id());
-        LlmProviderConfig active = providers.findById(saved.id()).orElseThrow();
+        providers.activate(userId, saved.id());
+        LlmProviderConfig active = providers.findById(userId, saved.id()).orElseThrow();
         configureClient(active);
         return LlmProviderResponse.from(active);
     }
 
     public LlmProviderResponse activate(long id) {
-        LlmProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        LlmProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LLM provider not found"));
-        providers.activate(provider.id());
-        LlmProviderConfig active = providers.findById(provider.id()).orElseThrow();
+        providers.activate(userId, provider.id());
+        LlmProviderConfig active = providers.findById(userId, provider.id()).orElseThrow();
         configureClient(active);
         return LlmProviderResponse.from(active);
     }
 
     public LlmProviderResponse rotateKey(long id, LlmProviderRotateRequest request) {
-        LlmProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        LlmProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LLM provider not found"));
         String apiKey = requireValue(request.apiKey(), "API Key is required");
-        providers.updateKey(provider.id(), secrets.encrypt(apiKey), mask(apiKey));
-        LlmProviderConfig updated = providers.findById(provider.id()).orElseThrow();
+        providers.updateKey(userId, provider.id(), secrets.encrypt(apiKey), mask(apiKey));
+        LlmProviderConfig updated = providers.findById(userId, provider.id()).orElseThrow();
         if (updated.active() && updated.enabled()) {
             configureClient(updated);
         }
@@ -74,26 +79,40 @@ public class LlmProviderService {
     }
 
     public LlmProviderResponse disable(long id) {
-        LlmProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        LlmProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LLM provider not found"));
-        providers.disable(provider.id());
+        providers.disable(userId, provider.id());
         if (provider.active()) {
             llm.configure(new CloudLlmConfigRequest(false, "", provider.baseUrl(), provider.model(), provider.timeoutSeconds()));
         }
-        return LlmProviderResponse.from(providers.findById(provider.id()).orElseThrow());
+        return LlmProviderResponse.from(providers.findById(userId, provider.id()).orElseThrow());
     }
 
     public void delete(long id) {
-        LlmProviderConfig provider = providers.findById(id)
+        long userId = currentUserId();
+        LlmProviderConfig provider = providers.findById(userId, id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "LLM provider not found"));
-        providers.delete(provider.id());
+        providers.delete(userId, provider.id());
         if (provider.active()) {
             llm.configure(new CloudLlmConfigRequest(false, "", provider.baseUrl(), provider.model(), provider.timeoutSeconds()));
         }
     }
 
     public void updateTestResult(String status, String message) {
-        providers.findActive().ifPresent(provider -> providers.updateTestResult(provider.id(), status, message));
+        long userId = currentUserId();
+        providers.findActive(userId).ifPresent(provider -> providers.updateTestResult(userId, provider.id(), status, message));
+    }
+
+    public void configureActiveForCurrentUser() {
+        configureActiveForUserId(currentUserId());
+    }
+
+    public void configureActiveForUserId(long userId) {
+        providers.findActive(userId).ifPresentOrElse(
+                this::configureClient,
+                () -> llm.configure(new CloudLlmConfigRequest(false, "", "https://api.deepseek.com/v1", "deepseek-chat", 60))
+        );
     }
 
     private void configureClient(LlmProviderConfig provider) {
@@ -104,6 +123,10 @@ public class LlmProviderService {
                 provider.model(),
                 provider.timeoutSeconds()
         ));
+    }
+
+    private long currentUserId() {
+        return currentUser.requireUser().id();
     }
 
     private String requireValue(String value, String message) {

@@ -1,0 +1,7 @@
+omnivid:
+  security:
+    compatibility-upload-enabled: ${OMNIVID_COMPATIBILITY_UPLOAD_ENABLED:false}
+  account:
+    expose-dev-tokens: ${OMNIVID_ACCOUNT_EXPOSE_DEV_TOKENS:false}
+  url-import:
+    allow-local-cookie-source: ${OMNIVID_URL_IMPORT_ALLOW_LOCAL_COOKIE_SOURCE:false}

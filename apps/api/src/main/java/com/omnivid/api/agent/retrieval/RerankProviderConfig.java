@@ -2,6 +2,7 @@ package com.omnivid.api.agent.retrieval;
 
 public record RerankProviderConfig(
         long id,
+        long userId,
         String providerName,
         String mode,
         String baseUrl,

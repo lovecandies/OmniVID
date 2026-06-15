@@ -14,20 +14,24 @@ public class VectorIndexService {
     private final TranscriptRepository transcripts;
     private final TranscriptVectorSearch vectorSearch;
     private final ObjectProvider<QdrantVectorStore> qdrant;
+    private final EmbeddingProviderService embeddingProviders;
 
     public VectorIndexService(
             VideoService videos,
             TranscriptRepository transcripts,
             TranscriptVectorSearch vectorSearch,
-            ObjectProvider<QdrantVectorStore> qdrant
+            ObjectProvider<QdrantVectorStore> qdrant,
+            EmbeddingProviderService embeddingProviders
     ) {
         this.videos = videos;
         this.transcripts = transcripts;
         this.vectorSearch = vectorSearch;
         this.qdrant = qdrant;
+        this.embeddingProviders = embeddingProviders;
     }
 
     public VectorIndexRebuildResponse rebuildDefaultKnowledgeBase() {
+        embeddingProviders.configureActiveForCurrentUser();
         List<VideoAsset> videoAssets = videos.listVideos();
         List<Long> videoIds = videoAssets.stream().map(VideoAsset::id).toList();
         List<TranscriptSegment> segments = transcripts.listByVideoIds(videoIds);

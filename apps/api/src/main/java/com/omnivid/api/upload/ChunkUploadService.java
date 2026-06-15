@@ -1,11 +1,14 @@
 package com.omnivid.api.upload;
 
 import com.omnivid.api.common.ApiException;
+import com.omnivid.api.auth.CurrentUserService;
 import com.omnivid.api.job.ProcessingJob;
 import com.omnivid.api.job.ProcessingJobRepository;
+import com.omnivid.api.quota.UserQuotaService;
 import com.omnivid.api.storage.LocalVideoStorageService;
 import com.omnivid.api.storage.StoredUploadPart;
 import com.omnivid.api.storage.StoredVideoFile;
+import com.omnivid.api.security.VideoUploadSecurityService;
 import com.omnivid.api.video.CompleteUploadResponse;
 import com.omnivid.api.video.VideoAsset;
 import com.omnivid.api.video.VideoRepository;
@@ -23,7 +26,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class ChunkUploadService {
-    private static final long DEMO_USER_ID = 1L;
     private static final long MIN_PART_SIZE = 256L * 1024L;
     private static final long MAX_PART_SIZE = 64L * 1024L * 1024L;
 
@@ -32,29 +34,40 @@ public class ChunkUploadService {
     private final VideoService videos;
     private final VideoRepository videoRepository;
     private final ProcessingJobRepository jobs;
+    private final CurrentUserService currentUser;
+    private final VideoUploadSecurityService uploadSecurity;
+    private final UserQuotaService quotas;
 
     public ChunkUploadService(
             ChunkUploadRepository uploads,
             LocalVideoStorageService storage,
             VideoService videos,
             VideoRepository videoRepository,
-            ProcessingJobRepository jobs
+            ProcessingJobRepository jobs,
+            CurrentUserService currentUser,
+            VideoUploadSecurityService uploadSecurity,
+            UserQuotaService quotas
     ) {
         this.uploads = uploads;
         this.storage = storage;
         this.videos = videos;
         this.videoRepository = videoRepository;
         this.jobs = jobs;
+        this.currentUser = currentUser;
+        this.uploadSecurity = uploadSecurity;
+        this.quotas = quotas;
     }
 
     public ChunkUploadSessionResponse createSession(ChunkUploadCreateRequest request) {
+        long userId = currentUserId();
         String fileName = sanitizeFileName(request.fileName());
         String fileMd5 = normalizeMd5(request.fileMd5());
         long fileSize = requirePositive(request.fileSize(), "fileSize");
+        uploadSecurity.validateNameAndSize(fileName, fileSize);
         long partSize = normalizePartSize(request.partSize());
         int totalParts = totalParts(fileSize, partSize, request.totalParts());
 
-        CompleteUploadResponse deduplicated = deduplicatedUpload(fileMd5);
+        CompleteUploadResponse deduplicated = deduplicatedUpload(userId, fileMd5);
         if (deduplicated != null) {
             return new ChunkUploadSessionResponse(
                     "",
@@ -71,12 +84,13 @@ public class ChunkUploadService {
                     deduplicated
             );
         }
+        quotas.requireCanStartUpload(userId, fileSize);
 
-        ChunkUploadSession session = uploads.findReusable(DEMO_USER_ID, fileMd5, fileName, fileSize, partSize, totalParts)
+        ChunkUploadSession session = uploads.findReusable(userId, fileMd5, fileName, fileSize, partSize, totalParts)
                 .orElseGet(() -> {
                     ChunkUploadSession created = new ChunkUploadSession(
                             UUID.randomUUID().toString(),
-                            DEMO_USER_ID,
+                            userId,
                             fileName,
                             fileSize,
                             fileMd5,
@@ -161,6 +175,7 @@ public class ChunkUploadService {
         uploads.markStatus(session.id(), "COMPLETING");
         try {
             StoredVideoFile storedFile = storage.mergeUploadParts(session.id(), session.fileName(), session.totalParts());
+            uploadSecurity.validateStoredFile(storedFile.localPath(), storedFile.originalName());
             if (!storedFile.md5().equalsIgnoreCase(session.fileMd5())) {
                 uploads.markStatus(session.id(), "FAILED");
                 throw new ApiException(HttpStatus.BAD_REQUEST, "Merged file MD5 mismatch");
@@ -176,8 +191,8 @@ public class ChunkUploadService {
         }
     }
 
-    private CompleteUploadResponse deduplicatedUpload(String fileMd5) {
-        VideoAsset existing = videoRepository.findByMd5(fileMd5).orElse(null);
+    private CompleteUploadResponse deduplicatedUpload(long userId, String fileMd5) {
+        VideoAsset existing = videoRepository.findByMd5AndUserId(fileMd5, userId).orElse(null);
         if (existing == null) {
             return null;
         }
@@ -187,8 +202,12 @@ public class ChunkUploadService {
     }
 
     private ChunkUploadSession requireSession(String sessionId) {
-        return uploads.findSession(sessionId)
+        ChunkUploadSession session = uploads.findSession(sessionId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Upload session not found"));
+        if (session.userId() != currentUserId()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Upload session not found");
+        }
+        return session;
     }
 
     private ChunkUploadSessionResponse response(ChunkUploadSession session, boolean deduplicated, CompleteUploadResponse upload) {
@@ -277,5 +296,9 @@ public class ChunkUploadService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "totalParts does not match fileSize and partSize");
         }
         return computed;
+    }
+
+    private long currentUserId() {
+        return currentUser.requireUser().id();
     }
 }

@@ -24,6 +24,6 @@ ENV SPRING_PROFILES_ACTIVE=docker \
 
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=10 \
-    CMD curl -fsS http://localhost:8080/api/runtime/status >/dev/null || exit 1
+    CMD curl -fsS http://localhost:8080/api/health >/dev/null || exit 1
 
 ENTRYPOINT ["java", "-jar", "/app/omnivid-api.jar"]

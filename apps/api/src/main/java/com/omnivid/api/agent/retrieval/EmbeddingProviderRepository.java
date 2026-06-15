@@ -16,34 +16,39 @@ public class EmbeddingProviderRepository {
         this.jdbc = jdbc;
     }
 
-    public List<EmbeddingProviderConfig> list() {
+    public List<EmbeddingProviderConfig> list(long userId) {
         return jdbc.sql("""
                 SELECT * FROM embedding_provider_config
+                WHERE user_id = :userId
                 ORDER BY active DESC, updated_at DESC, id DESC
                 """)
+                .param("userId", userId)
                 .query(this::map)
                 .list();
     }
 
-    public Optional<EmbeddingProviderConfig> findById(long id) {
-        return jdbc.sql("SELECT * FROM embedding_provider_config WHERE id = :id")
+    public Optional<EmbeddingProviderConfig> findById(long userId, long id) {
+        return jdbc.sql("SELECT * FROM embedding_provider_config WHERE id = :id AND user_id = :userId")
+                .param("userId", userId)
                 .param("id", id)
                 .query(this::map)
                 .optional();
     }
 
-    public Optional<EmbeddingProviderConfig> findActive() {
+    public Optional<EmbeddingProviderConfig> findActive(long userId) {
         return jdbc.sql("""
                 SELECT * FROM embedding_provider_config
-                WHERE active = TRUE AND enabled = TRUE
+                WHERE user_id = :userId AND active = TRUE AND enabled = TRUE
                 ORDER BY updated_at DESC, id DESC
                 LIMIT 1
                 """)
+                .param("userId", userId)
                 .query(this::map)
                 .optional();
     }
 
     public EmbeddingProviderConfig save(
+            long userId,
             String providerName,
             String mode,
             String baseUrl,
@@ -55,9 +60,10 @@ public class EmbeddingProviderRepository {
         try {
             jdbc.sql("""
                     INSERT INTO embedding_provider_config
-                    (provider_name, mode, base_url, model, api_key_encoded, api_key_masked, timeout_seconds, enabled, active)
-                    VALUES (:providerName, :mode, :baseUrl, :model, :apiKeyEncoded, :apiKeyMasked, :timeoutSeconds, TRUE, FALSE)
+                    (user_id, provider_name, mode, base_url, model, api_key_encoded, api_key_masked, timeout_seconds, enabled, active)
+                    VALUES (:userId, :providerName, :mode, :baseUrl, :model, :apiKeyEncoded, :apiKeyMasked, :timeoutSeconds, TRUE, FALSE)
                     """)
+                    .param("userId", userId)
                     .param("providerName", providerName)
                     .param("mode", mode)
                     .param("baseUrl", baseUrl)
@@ -66,7 +72,7 @@ public class EmbeddingProviderRepository {
                     .param("apiKeyMasked", apiKeyMasked)
                     .param("timeoutSeconds", timeoutSeconds)
                     .update();
-            return findByNaturalKey(mode, baseUrl, model).orElseThrow();
+            return findByNaturalKey(userId, mode, baseUrl, model).orElseThrow();
         } catch (DuplicateKeyException ignored) {
             jdbc.sql("""
                     UPDATE embedding_provider_config
@@ -77,7 +83,9 @@ public class EmbeddingProviderRepository {
                         enabled = TRUE,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE mode = :mode AND base_url = :baseUrl AND model = :model
+                      AND user_id = :userId
                     """)
+                    .param("userId", userId)
                     .param("providerName", providerName)
                     .param("mode", mode)
                     .param("baseUrl", baseUrl)
@@ -86,74 +94,81 @@ public class EmbeddingProviderRepository {
                     .param("apiKeyMasked", apiKeyMasked)
                     .param("timeoutSeconds", timeoutSeconds)
                     .update();
-            return findByNaturalKey(mode, baseUrl, model).orElseThrow();
+            return findByNaturalKey(userId, mode, baseUrl, model).orElseThrow();
         }
     }
 
-    public void activate(long id) {
-        jdbc.sql("UPDATE embedding_provider_config SET active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE active = TRUE")
+    public void activate(long userId, long id) {
+        jdbc.sql("UPDATE embedding_provider_config SET active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE user_id = :userId AND active = TRUE")
+                .param("userId", userId)
                 .update();
         jdbc.sql("""
                 UPDATE embedding_provider_config
                 SET active = TRUE, enabled = TRUE, updated_at = CURRENT_TIMESTAMP
-                WHERE id = :id
+                WHERE id = :id AND user_id = :userId
                 """)
+                .param("userId", userId)
                 .param("id", id)
                 .update();
     }
 
-    public void updateKey(long id, String apiKeyEncoded, String apiKeyMasked) {
+    public void updateKey(long userId, long id, String apiKeyEncoded, String apiKeyMasked) {
         jdbc.sql("""
                 UPDATE embedding_provider_config
                 SET api_key_encoded = :apiKeyEncoded,
                     api_key_masked = :apiKeyMasked,
                     enabled = TRUE,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = :id
+                WHERE id = :id AND user_id = :userId
                 """)
+                .param("userId", userId)
                 .param("id", id)
                 .param("apiKeyEncoded", apiKeyEncoded)
                 .param("apiKeyMasked", apiKeyMasked)
                 .update();
     }
 
-    public void disable(long id) {
+    public void disable(long userId, long id) {
         jdbc.sql("""
                 UPDATE embedding_provider_config
                 SET enabled = FALSE,
                     active = FALSE,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = :id
+                WHERE id = :id AND user_id = :userId
                 """)
+                .param("userId", userId)
                 .param("id", id)
                 .update();
     }
 
-    public void delete(long id) {
-        jdbc.sql("DELETE FROM embedding_provider_config WHERE id = :id")
+    public void delete(long userId, long id) {
+        jdbc.sql("DELETE FROM embedding_provider_config WHERE id = :id AND user_id = :userId")
+                .param("userId", userId)
                 .param("id", id)
                 .update();
     }
 
-    public void updateTestResult(long id, String status, String message) {
+    public void updateTestResult(long userId, long id, String status, String message) {
         jdbc.sql("""
                 UPDATE embedding_provider_config
                 SET last_test_status = :status,
                     last_test_message = :message,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = :id
+                WHERE id = :id AND user_id = :userId
                 """)
+                .param("userId", userId)
                 .param("id", id)
                 .param("status", status)
                 .param("message", truncate(message))
                 .update();
     }
 
-    private Optional<EmbeddingProviderConfig> findByNaturalKey(String mode, String baseUrl, String model) {
+    private Optional<EmbeddingProviderConfig> findByNaturalKey(long userId, String mode, String baseUrl, String model) {
         return jdbc.sql("""
                 SELECT * FROM embedding_provider_config
-                WHERE mode = :mode AND base_url = :baseUrl AND model = :model
+                WHERE user_id = :userId AND mode = :mode AND base_url = :baseUrl AND model = :model
                 """)
+                .param("userId", userId)
                 .param("mode", mode)
                 .param("baseUrl", baseUrl)
                 .param("model", model)
@@ -171,6 +186,7 @@ public class EmbeddingProviderRepository {
     private EmbeddingProviderConfig map(ResultSet rs, int rowNum) throws SQLException {
         return new EmbeddingProviderConfig(
                 rs.getLong("id"),
+                rs.getLong("user_id"),
                 rs.getString("provider_name"),
                 rs.getString("mode"),
                 rs.getString("base_url"),

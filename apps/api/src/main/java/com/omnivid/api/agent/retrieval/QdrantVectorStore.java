@@ -193,7 +193,7 @@ public class QdrantVectorStore {
             return false;
         }
         try {
-            if (!recreateCollection(dimensions)) {
+            if (!ensureCollection(dimensions)) {
                 return false;
             }
             upsertMissingSegments(segments, segmentVectors, dimensions);
@@ -221,13 +221,7 @@ public class QdrantVectorStore {
             if (existingDimensions > 0 && existingDimensions != dimensions) {
                 log.warn("Qdrant collection {} dimensions {} do not match embedding dimensions {}",
                         collectionName, existingDimensions, dimensions);
-                HttpResponse<String> delete = send("DELETE", "/collections/" + collectionName + "?timeout=30", null);
-                if (delete.statusCode() < 200 || delete.statusCode() >= 300) {
-                    return false;
-                }
-                indexedContentHash.clear();
-                readyDimensions = 0;
-                return createCollection(dimensions);
+                return false;
             }
             readyDimensions = dimensions;
             return true;
@@ -252,16 +246,6 @@ public class QdrantVectorStore {
             readyDimensions = dimensions;
         }
         return created;
-    }
-
-    private boolean recreateCollection(int dimensions) throws Exception {
-        HttpResponse<String> delete = send("DELETE", "/collections/" + collectionName + "?timeout=30", null);
-        if (delete.statusCode() != 404 && (delete.statusCode() < 200 || delete.statusCode() >= 300)) {
-            return false;
-        }
-        indexedContentHash.clear();
-        readyDimensions = 0;
-        return createCollection(dimensions);
     }
 
     private void upsertMissingSegments(

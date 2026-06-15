@@ -48,9 +48,9 @@ $deadline = (Get-Date).AddSeconds(90)
 do {
     Start-Sleep -Seconds 3
     try {
-        $runtime = Invoke-RestMethod "http://localhost:8080/api/runtime/status" -TimeoutSec 3
-        if ($runtime.profile -eq "docker" -and $runtime.database.product -like "*MySQL*" -and $runtime.redis.connected -and $runtime.processing.connected) {
-            Write-Host "API connected: profile=$($runtime.profile), db=$($runtime.database.product), redis=$($runtime.redis.connected), processing=$($runtime.processing.mode), vector=$($runtime.llm.vectorStoreMode)"
+        $health = Invoke-RestMethod "http://localhost:8080/api/health" -TimeoutSec 3
+        if ($health.status -eq "UP") {
+            Write-Host "API health ready: $($health.status)"
             Write-Host "Log: $logPath"
             exit 0
         }

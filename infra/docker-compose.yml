@@ -4,14 +4,15 @@ services:
   mysql:
     image: mysql:8.4
     container_name: omnivid-mysql
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: omnivid_root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-omnivid_root}
       MYSQL_DATABASE: omnivid
       MYSQL_USER: omnivid
-      MYSQL_PASSWORD: omnivid_pass
+      MYSQL_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-omnivid_pass}
       TZ: Asia/Shanghai
     ports:
-      - "3307:3306"
+      - "127.0.0.1:3307:3306"
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
@@ -19,7 +20,7 @@ services:
     volumes:
       - omnivid_mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u omnivid -pomnivid_pass --silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u omnivid -p$${MYSQL_PASSWORD} --silent"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -27,8 +28,9 @@ services:
   redis:
     image: redis:7.4
     container_name: omnivid-redis
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - omnivid_redis_data:/data
@@ -41,30 +43,33 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.14.1
     container_name: omnivid-qdrant
+    restart: unless-stopped
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       - omnivid_qdrant_data:/qdrant/storage
 
   rocketmq-namesrv:
     image: apache/rocketmq:5.3.2
     container_name: omnivid-rocketmq-namesrv
+    restart: unless-stopped
     command: sh mqnamesrv
     ports:
-      - "9876:9876"
+      - "127.0.0.1:9876:9876"
     environment:
       JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
 
   rocketmq-broker:
     image: apache/rocketmq:5.3.2
     container_name: omnivid-rocketmq-broker
+    restart: unless-stopped
     command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/conf/broker.conf
     depends_on:
       - rocketmq-namesrv
     ports:
-      - "10909:10909"
-      - "10911:10911"
-      - "10912:10912"
+      - "127.0.0.1:10909:10909"
+      - "127.0.0.1:10911:10911"
+      - "127.0.0.1:10912:10912"
     environment:
       NAMESRV_ADDR: "rocketmq-namesrv:9876"
       JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
@@ -77,6 +82,7 @@ services:
       context: ..
       dockerfile: apps/api/Dockerfile
     container_name: omnivid-api
+    restart: unless-stopped
     depends_on:
       mysql:
         condition: service_healthy
@@ -89,13 +95,23 @@ services:
       rocketmq-broker:
         condition: service_started
     environment:
-      SPRING_PROFILES_ACTIVE: docker
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/omnivid?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
       SPRING_DATASOURCE_USERNAME: omnivid
-      SPRING_DATASOURCE_PASSWORD: omnivid_pass
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-omnivid_pass}
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
       OMNIVID_PROVIDER_KEY_SECRET: ${OMNIVID_PROVIDER_KEY_SECRET:-omnivid-dev-provider-secret-change-me}
+      OMNIVID_ADMIN_EMAILS: ${OMNIVID_ADMIN_EMAILS:-}
+      OMNIVID_PUBLIC_BASE_URL: ${OMNIVID_PUBLIC_BASE_URL:-}
+      OMNIVID_SESSION_COOKIE_SECURE: ${OMNIVID_SESSION_COOKIE_SECURE:-false}
+      OMNIVID_LOGIN_MAX_FAILURES: ${OMNIVID_LOGIN_MAX_FAILURES:-5}
+      OMNIVID_LOGIN_CAPTCHA_THRESHOLD: ${OMNIVID_LOGIN_CAPTCHA_THRESHOLD:-3}
+      OMNIVID_LOGIN_FAILURE_WINDOW: ${OMNIVID_LOGIN_FAILURE_WINDOW:-10m}
+      OMNIVID_API_RATE_LIMIT_MAX_REQUESTS: ${OMNIVID_API_RATE_LIMIT_MAX_REQUESTS:-300}
+      OMNIVID_API_RATE_LIMIT_WINDOW: ${OMNIVID_API_RATE_LIMIT_WINDOW:-1m}
+      OMNIVID_COMPATIBILITY_UPLOAD_ENABLED: ${OMNIVID_COMPATIBILITY_UPLOAD_ENABLED:-true}
+      OMNIVID_URL_IMPORT_ALLOW_LOCAL_COOKIE_SOURCE: ${OMNIVID_URL_IMPORT_ALLOW_LOCAL_COOKIE_SOURCE:-true}
       OMNIVID_STORAGE_ROOT: /data/omnivid/storage
       OMNIVID_FFMPEG_PATH: /usr/bin/ffmpeg
       OMNIVID_YTDLP_PATH: /usr/local/bin/yt-dlp
@@ -112,7 +128,7 @@ services:
       OMNIVID_RERANK_MODE: ${OMNIVID_RERANK_MODE:-local}
       NO_PROXY: localhost,127.0.0.1,mysql,redis,qdrant,rocketmq-namesrv,rocketmq-broker,host.docker.internal
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ../apps/api/storage:/data/omnivid/storage
 
@@ -124,13 +140,35 @@ services:
       args:
         VITE_API_BASE_URL: ""
     container_name: omnivid-web
+    restart: unless-stopped
     depends_on:
       omnivid-api:
         condition: service_healthy
     ports:
-      - "5174:80"
+      - "127.0.0.1:5174:80"
+
+  omnivid-gateway:
+    profiles: ["public"]
+    image: caddy:2.8-alpine
+    container_name: omnivid-gateway
+    restart: unless-stopped
+    depends_on:
+      omnivid-web:
+        condition: service_healthy
+    environment:
+      OMNIVID_DOMAIN: ${OMNIVID_DOMAIN:-video.example.com}
+    ports:
+      - "${OMNIVID_HTTP_PORT:-80}:80"
+      - "${OMNIVID_HTTPS_PORT:-443}:443"
+      - "${OMNIVID_HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - omnivid_caddy_data:/data
+      - omnivid_caddy_config:/config
 
 volumes:
   omnivid_mysql_data:
   omnivid_redis_data:
   omnivid_qdrant_data:
+  omnivid_caddy_data:
+  omnivid_caddy_config:
