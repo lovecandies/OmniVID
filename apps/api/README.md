@@ -70,7 +70,7 @@ Real upload smoke test:
 curl.exe -F "file=@E:\video\tools\ffmpeg\omnivid-ffmpeg-smoke.mp4" http://localhost:8080/api/videos/upload/file
 ```
 
-Expected: `currentStep=AUDIO_EXTRACTED_AND_LOCAL_DAG_DONE`, and `storage/videos/{md5}/audio.wav` exists.
+Expected: `currentStep=AUDIO_EXTRACTED_AND_LOCAL_DAG_DONE`, `storage/videos/{md5}/audio-raw.wav` exists, and `audio.wav` / `audio-vad.wav` are shorter than the raw track when VAD applies.
 
 ## MVP Endpoints
 
@@ -91,5 +91,12 @@ Expected: `currentStep=AUDIO_EXTRACTED_AND_LOCAL_DAG_DONE`, and `storage/videos/
 - `transcript_segment(video_id, start_ms)`: timeline query index.
 - H2 MySQL mode: local black-box demo without Docker.
 - `DedupeLockService`: local implementation by default, Redis implementation in `docker` profile.
-- FFmpeg subprocess extraction: uploaded video creates `audio.wav`, with process timeout and log capture.
+- FFmpeg subprocess extraction: uploaded video creates `audio-raw.wav`, trims `audio.wav` / `audio-vad.wav` for ASR when VAD applies, and captures process logs.
 - Agent response citations: answer includes `videoId`, `startMs`, `endMs`, and display citation.
+
+
+## ASR VAD 提速
+
+- 上传和重跑 ASR 会先保留完整 `audio-raw.wav`，再生成裁剪后的 `audio.wav` / `audio-vad.wav`，只把有人声的片段交给 Whisper。
+- 同目录会写出 `audio-vad-map.json`，用于把转写时间轴映射回原视频时间点。
+- 如果静音检测没有得到可用片段，后端会自动回退到完整音频，不会因为 VAD 失败中断任务。

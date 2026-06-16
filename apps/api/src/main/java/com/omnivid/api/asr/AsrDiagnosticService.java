@@ -1,5 +1,7 @@
 package com.omnivid.api.asr;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnivid.api.common.ApiException;
 import com.omnivid.api.job.ProcessingJob;
 import com.omnivid.api.job.ProcessingJobRepository;
@@ -24,6 +26,7 @@ public class AsrDiagnosticService {
     private final TranscriptRepository transcripts;
     private final LocalVideoStorageService storage;
     private final SubtitleTextSanitizer sanitizer;
+    private final ObjectMapper objectMapper;
     private final String asrPath;
     private final String modelPath;
     private final String audioFilter;
@@ -42,6 +45,7 @@ public class AsrDiagnosticService {
             TranscriptRepository transcripts,
             LocalVideoStorageService storage,
             SubtitleTextSanitizer sanitizer,
+            ObjectMapper objectMapper,
             @Value("${omnivid.asr.path}") String asrPath,
             @Value("${omnivid.asr.model}") String modelPath,
             @Value("${omnivid.ffmpeg.audio-filter:}") String audioFilter,
@@ -58,6 +62,7 @@ public class AsrDiagnosticService {
         this.transcripts = transcripts;
         this.storage = storage;
         this.sanitizer = sanitizer;
+        this.objectMapper = objectMapper;
         this.asrPath = asrPath;
         this.modelPath = modelPath;
         this.audioFilter = audioFilter == null ? "" : audioFilter.trim();
@@ -79,10 +84,13 @@ public class AsrDiagnosticService {
         Path videoPath = storage.resolveLocalFile(video.storagePath());
         Path videoDir = videoPath.getParent();
         Path audioPath = videoDir.resolve("audio.wav");
+        Path transcriptionAudioPath = videoDir.resolve("audio-vad.wav");
+        Path vadMapPath = videoDir.resolve("audio-vad-map.json");
         Path asrJsonPath = videoDir.resolve("asr.json");
         Path asrLogPath = videoDir.resolve("asr.log");
         Path ffmpegLogPath = videoDir.resolve("ffmpeg.log");
 
+        boolean vadMapExists = Files.isRegularFile(vadMapPath);
         return new AsrDiagnosticResponse(
                 video.id(),
                 video.originalName(),
@@ -98,6 +106,13 @@ public class AsrDiagnosticService {
                 Files.isRegularFile(Path.of(resolvedModelPath)),
                 Files.isRegularFile(audioPath),
                 sizeOrZero(audioPath),
+                Files.isRegularFile(transcriptionAudioPath),
+                sizeOrZero(transcriptionAudioPath),
+                vadMapExists,
+                vadMapExists,
+                vadMapExists ? "local://" + vadMapPath.getFileName() : "",
+                sizeOrZero(vadMapPath),
+                countVadSegments(vadMapPath),
                 Files.isRegularFile(asrJsonPath),
                 sizeOrZero(asrJsonPath),
                 Files.isRegularFile(asrLogPath),
@@ -139,6 +154,18 @@ public class AsrDiagnosticService {
                 report.cjkCount(),
                 sample.length() <= 160 ? sample : sample.substring(0, 160)
         );
+    }
+
+    private int countVadSegments(Path path) {
+        try {
+            if (!Files.isRegularFile(path)) {
+                return 0;
+            }
+            JsonNode segments = objectMapper.readTree(path.toFile()).path("segments");
+            return segments.isArray() ? segments.size() : 0;
+        } catch (IOException exception) {
+            return 0;
+        }
     }
 
     private long sizeOrZero(Path path) {

@@ -189,6 +189,26 @@ cd E:\video
 Invoke-RestMethod http://localhost:8080/api/runtime/status | ConvertTo-Json -Depth 6
 ```
 
+## 已完成：ASR VAD 提速
+
+后端落点：
+
+- `FfmpegAudioExtractionService`：完整音频写入 `audio-raw.wav`，再用 ffmpeg `silencedetect` 识别静音区间并生成裁剪后的 `audio.wav` / `audio-vad.wav`。
+- `AudioVadMap` / `AudioVadSegment`：记录源音频区间与转写音频区间的映射，落盘为 `audio-vad-map.json`。
+- `WhisperAsrService`：默认转写 `audio-vad.wav`，并在解析 `asr.json` 后把字幕时间轴映射回原视频。
+- `AsrDiagnosticService`：诊断接口新增 VAD 音频、映射文件和片段数量。
+
+前端落点：
+
+- ASR Diagnostic 面板新增 `VAD Audio` 和 `VAD Map` 状态格，能看到 `audio-vad.wav` 是否存在、映射是否生效以及片段数量。
+
+验证目标：
+
+- 上传或重跑含长停顿的视频后，视频目录应同时存在 `audio-raw.wav` 与 `audio-vad.wav`。
+- VAD 生效时 `audio-vad.wav` 时长明显短于 `audio-raw.wav`，`ASR_TRANSCRIBING` 等待时间随输入音频缩短。
+- 点击字幕仍跳回原视频真实时间点。
+- 静音检测失败或收益太小时自动回退完整音频，不中断解析任务。
+
 ## 已完成：PPTX / DOCX / Markdown 真实导出
 
 后端落点：

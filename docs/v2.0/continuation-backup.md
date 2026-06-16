@@ -109,3 +109,11 @@ git diff --check
 ```
 
 最后执行敏感信息扫描，确认没有真实 API Key、Cookie 或个人凭据再提交。
+
+
+## 2026-06-16 增量
+
+- 当前恢复出的会话文件：`codex-session-019eb1b9-full-chat.md`、`codex-session-019eb1b9-index.md`、`codex-session-019eb1b9-recovered-chat.md`、`codex-session-019eb1b9-tool-timeline.md`。
+- 这次断点后的主要功能变化是 ASR VAD 提速：完整音频留作 `audio-raw.wav`，ASR 默认转写 `audio-vad.wav`，时间轴映射由 `audio-vad-map.json` 承担。
+- `backups/` 和 `备份/` 仍保持本地运行备份，不直接作为 GitHub 公开产物；公开清单见 `docs/v2.0/local-backup-manifest.md`。
+- 如果需要继续接续，先看 `README.md` 的当前成果表，再看 `apps/api/README.md` 的启动与烟测，再看 `apps/api/CODEX.md` 的 ASR VAD 说明。

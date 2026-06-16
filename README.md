@@ -27,8 +27,8 @@ Version 1.0 的发布文档、面试文档和会话备份继续保留在 [docs/v
 | 本地视频上传 | 已实现 | 真实文件上传到后端，保存到本地存储目录并计算 MD5 |
 | MD5 去重 | 已实现 | 重复视频复用已有资产，Redis/本地锁防抖，MySQL 唯一索引兜底 |
 | 异步解析 DAG | 已实现 | 上传后后台执行解析任务，前端展示阶段和进度 |
-| ffprobe/ffmpeg | 已实现 | 识别视频时长，抽取 `audio.wav` 供 ASR 使用 |
-| whisper.cpp ASR | 已实现 | 字幕区展示真实语音转写片段 |
+| ffprobe/ffmpeg + VAD | 已实现 | 识别视频时长，保留 `audio-raw.wav`，裁剪 `audio.wav` / `audio-vad.wav` 供 ASR 只转写有效人声片段 |
+| whisper.cpp ASR | 已实现 | 基于 VAD 短音频转写，并通过 `audio-vad-map.json` 映射回原视频时间轴 |
 | 视频播放 | 已实现 | 支持 Range 播放上传视频 |
 | 字幕点击跳转 | 已实现 | 点击字幕可跳到播放器对应时间点 |
 | 播放同步字幕 | 已实现 | 播放或拖动进度时高亮当前字幕 |
@@ -48,7 +48,7 @@ Version 1.0 的发布文档、面试文档和会话备份继续保留在 [docs/v
 | 运行时检查面板 | 已实现 | MySQL、Redis、JVM 线程池、SSE、Retrieval、Vector Store 可观测 |
 | 平台 URL 导入 | MVP 已实现 | B站/抖音/小红书公开链接通过 `yt-dlp` 复用解析链路，受平台反爬和 Cookie 影响 |
 | URL 导入诊断 | 已实现 | B站 412、403、Cookie 缺失、yt-dlp 缺失、ffmpeg 合并失败会返回 `message/suggestion/detail` |
-| ASR 诊断面板 | 已实现 | 当前视频可查看模型文件、`audio.wav`、`asr.json`、字幕条数、`ffmpeg.log` 和 `asr.log` 摘要 |
+| ASR 诊断面板 | 已实现 | 当前视频可查看模型文件、`audio.wav`、`audio-vad.wav`、VAD 映射、`asr.json`、字幕条数和日志摘要 |
 | RAG 检索过滤 Trace | 已实现 | Retrieval Inspector 展示 candidates、usable、top hit、citations、rejected 和 strict filter |
 | 任务重试边界 | 已实现 | 只有最新 FAILED job 允许补偿重试；DONE/RUNNING 误重试返回结构化建议 |
 
@@ -163,3 +163,10 @@ http://127.0.0.1:5173
 - [Spring 事务手册](docs/08-spring-transaction-interview-hooks.md)
 - [AI Agent RAG 手册](docs/09-ai-agent-rag-interview-hooks.md)
 - [任务失败恢复手册](docs/10-task-retry-interview-hooks.md)
+
+
+## 备份与 GitHub
+
+- 会话恢复文件已保留在仓库根目录：`codex-session-019eb1b9-full-chat.md`、`codex-session-019eb1b9-index.md`、`codex-session-019eb1b9-recovered-chat.md`、`codex-session-019eb1b9-tool-timeline.md`。
+- `backups/` 和 `备份/` 继续保持本地，不作为公开 GitHub 产物直接提交。
+- 断点恢复与版本基线请看 `docs/v2.0/continuation-backup.md`，本地备份清单请看 `docs/v2.0/local-backup-manifest.md`。

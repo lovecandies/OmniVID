@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -20,9 +21,13 @@ public class VideoMetadataProbeService {
             @Value("${omnivid.ffmpeg.timeout}") Duration timeout
     ) {
         Path ffmpeg = Path.of(ffmpegPath);
+        String ffprobeName = ffmpeg.getFileName() != null
+                && ffmpeg.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".exe")
+                ? "ffprobe.exe"
+                : "ffprobe";
         this.ffprobePath = ffmpeg.getParent() == null
-                ? "ffprobe"
-                : ffmpeg.getParent().resolve("ffprobe.exe").toString();
+                ? ffprobeName
+                : ffmpeg.getParent().resolve(ffprobeName).toString();
         this.timeout = timeout;
     }
 

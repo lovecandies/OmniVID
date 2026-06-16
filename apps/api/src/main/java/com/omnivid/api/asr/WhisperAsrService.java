@@ -3,6 +3,7 @@ package com.omnivid.api.asr;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnivid.api.media.AudioExtractionResult;
+import com.omnivid.api.media.AudioVadSegment;
 import com.omnivid.api.storage.StoredVideoFile;
 import com.omnivid.api.transcript.SubtitleTextSanitizer;
 import java.io.IOException;
@@ -65,7 +66,7 @@ public class WhisperAsrService {
 
     public AsrTranscriptionResult transcribe(StoredVideoFile videoFile, AudioExtractionResult audioResult) {
         Path videoPath = videoFile.localPath().toAbsolutePath().normalize();
-        Path audioPath = videoPath.getParent().resolve(fileNameFromLocalPath(audioResult.audioPath())).normalize();
+        Path audioPath = videoPath.getParent().resolve(fileNameFromLocalPath(audioResult.transcriptionAudioPath())).normalize();
         Path outputPrefix = videoPath.getParent().resolve("asr").toAbsolutePath().normalize();
         Path outputJson = Path.of(outputPrefix.toString() + ".json");
         Path logPath = videoPath.getParent().resolve("asr.log").toAbsolutePath().normalize();
@@ -91,7 +92,8 @@ public class WhisperAsrService {
                 throw new AsrTranscriptionException("ASR did not produce JSON output");
             }
 
-            return parse(outputJson);
+            AsrTranscriptionResult result = parse(outputJson);
+            return mapToSourceTimeline(result, audioResult);
         } catch (IOException exception) {
             throw new AsrTranscriptionException("ASR execution failed", exception);
         } catch (InterruptedException exception) {
@@ -144,6 +146,36 @@ public class WhisperAsrService {
         }
 
         return new AsrTranscriptionResult(language, segments);
+    }
+
+    private AsrTranscriptionResult mapToSourceTimeline(AsrTranscriptionResult result, AudioExtractionResult audioResult) {
+        if (!audioResult.vadApplied() || audioResult.vadSegments().isEmpty() || result.segments().isEmpty()) {
+            return result;
+        }
+
+        List<AsrTranscriptSegment> mappedSegments = new ArrayList<>();
+        for (AsrTranscriptSegment segment : result.segments()) {
+            long startMs = mapVadOffset(segment.startMs(), audioResult.vadSegments());
+            long endMs = Math.max(startMs + 1, mapVadOffset(segment.endMs(), audioResult.vadSegments()));
+            mappedSegments.add(new AsrTranscriptSegment(startMs, endMs, segment.text()));
+        }
+        return new AsrTranscriptionResult(result.language(), mappedSegments);
+    }
+
+    private long mapVadOffset(long offsetMs, List<AudioVadSegment> vadSegments) {
+        for (AudioVadSegment segment : vadSegments) {
+            if (offsetMs <= segment.transcriptionEndMs()) {
+                long relativeMs = clamp(offsetMs - segment.transcriptionStartMs(), 0, segment.sourceEndMs() - segment.sourceStartMs());
+                return segment.sourceStartMs() + relativeMs;
+            }
+        }
+
+        AudioVadSegment lastSegment = vadSegments.get(vadSegments.size() - 1);
+        return lastSegment.sourceEndMs() + Math.max(0, offsetMs - lastSegment.transcriptionEndMs());
+    }
+
+    private long clamp(long value, long minimum, long maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
     }
 
     private String blankToDefault(String value, String fallback) {

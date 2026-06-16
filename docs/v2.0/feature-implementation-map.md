@@ -71,3 +71,10 @@ Provider 失败 -> 本地 Embedding/Rerank/总结兜底
 | 对象存储和 CDN | 当前共享本地持久化目录足以演示 | 2.1+ |
 | 独立解析 Worker 集群 | 当前 RocketMQ Consumer 仍在单体 API 中 | 2.1+ |
 | Kubernetes / APM | 当前 Compose + JSON Trace 已满足演示 | 3.0 |
+
+
+## ASR VAD 提速
+
+| 功能 | 前端入口 | 后端落点 | 数据/基础设施 | 用户可见验证 |
+| --- | --- | --- | --- | --- |
+| ASR VAD 提速 | 诊断台 ASR | `FfmpegAudioExtractionService`、`WhisperAsrService`、`AsrDiagnosticService` | `audio-raw.wav`、`audio.wav`、`audio-vad.wav`、`audio-vad-map.json` | 长停顿视频转写更快，字幕仍能跳回原视频时间点 |

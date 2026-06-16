@@ -636,6 +636,13 @@ type AsrDiagnostic = {
   modelExists: boolean;
   audioExists: boolean;
   audioSizeBytes: number;
+  transcriptionAudioExists: boolean;
+  transcriptionAudioSizeBytes: number;
+  vadApplied: boolean;
+  vadMapExists: boolean;
+  vadMapPath: string;
+  vadMapSizeBytes: number;
+  vadSegmentCount: number;
   asrJsonExists: boolean;
   asrJsonSizeBytes: number;
   asrLogExists: boolean;
@@ -5743,7 +5750,19 @@ function AsrDiagnosticPanel({
             label="Audio"
             tone={diagnostic.audioExists ? "done" : "warn"}
             value={diagnostic.audioExists ? `${bytesToMb(diagnostic.audioSizeBytes)} MB` : "missing"}
-            detail="audio.wav from ffmpeg"
+            detail="audio.wav after VAD fallback or trim"
+          />
+          <RuntimeCell
+            label="VAD Audio"
+            tone={diagnostic.transcriptionAudioExists ? "done" : "warn"}
+            value={diagnostic.transcriptionAudioExists ? `${bytesToMb(diagnostic.transcriptionAudioSizeBytes)} MB` : "missing"}
+            detail={diagnostic.vadApplied ? "audio-vad.wav for Whisper" : "fallback uses full audio"}
+          />
+          <RuntimeCell
+            label="VAD Map"
+            tone={diagnostic.vadMapExists ? "done" : "warn"}
+            value={diagnostic.vadMapExists ? `${diagnostic.vadSegmentCount} segments` : "not applied"}
+            detail={diagnostic.vadMapPath || "audio-vad-map.json unavailable"}
           />
           <RuntimeCell
             label="Audio Filter"
