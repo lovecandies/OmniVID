@@ -3715,13 +3715,13 @@ function DiagnosticsPanel({
   video: VideoAsset | null;
 }) {
   return (
-    <section className="diagnostics-panel" aria-label="面试钩子诊断台">
+    <section className="diagnostics-panel" aria-label="工程诊断台">
       <div className="diagnostics-head">
         <div className="diagnostics-title-row">
           <div>
             <div className="eyebrow">
               <ShieldCheck size={16} />
-              Interview Hooks
+              Engineering Evidence
             </div>
             <h2>诊断台</h2>
           </div>
@@ -3734,7 +3734,7 @@ function DiagnosticsPanel({
         </div>
         <div className="diagnostics-metrics" aria-label="诊断状态指标">
           <Metric icon={<Database size={16} />} label="MySQL 状态机" value="6 tables" />
-          <Metric icon={<Zap size={16} />} label="Redis 钩子" value="7 keys" />
+          <Metric icon={<Zap size={16} />} label="Redis 证据" value="7 keys" />
           <Metric icon={<GitBranch size={16} />} label="RocketMQ 调度" value={runtimeStatus?.processing.mode ?? "local"} />
           <Metric icon={<Bot size={16} />} label="Agent 工具" value="3 tools" />
         </div>
@@ -4011,6 +4011,7 @@ const summaryTemplates = [
   { type: "MEETING_MINUTES", label: "会议纪要", actionLabel: "生成会议总结" },
   { type: "BLOG_OUTLINE", label: "博客大纲", actionLabel: "生成博客大纲" },
   { type: "PPT_OUTLINE", label: "PPT 大纲", actionLabel: "生成 PPT 大纲" },
+  { type: "ENGINEERING_INSIGHTS", label: "工程洞察", actionLabel: "生成工程洞察" },
 ];
 
 const diagnosticTabs: { id: DiagnosticsTab; label: string; meta: string }[] = [
@@ -4056,7 +4057,7 @@ function Header({
       <div>
         <div className="eyebrow">
           <BrainCircuit size={16} />
-          Java 后端求职型 AI Agent 项目
+          Long-video AI Knowledge Platform
         </div>
         <h1>OmniVid 工作台</h1>
       </div>
@@ -4147,7 +4148,7 @@ function AuthGate({
                 autoComplete="nickname"
                 maxLength={80}
                 onChange={(event) => onChange({ ...form, nickname: event.target.value })}
-                placeholder="面试项目展示名"
+                placeholder="OmniVid workspace"
                 required
                 type="text"
                 value={form.nickname}
@@ -6588,7 +6589,7 @@ function HookPanel({
     <section className="panel compact-panel">
       <div className="panel-title">
         <Sparkles size={19} />
-        <h2>面试钩子</h2>
+        <h2>工程证据</h2>
       </div>
       <div className="hook-list">
         {hooks.map((hook) => (

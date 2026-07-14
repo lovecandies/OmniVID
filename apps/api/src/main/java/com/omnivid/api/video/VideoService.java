@@ -921,8 +921,8 @@ public class VideoService {
                 summaryJson("items", buildBlogOutline(video, segments)));
         summaries.insertIfAbsent(video.id(), "PPT_OUTLINE", "PPT 大纲",
                 summaryJson("items", buildPptOutline(video, segments)));
-        summaries.insertIfAbsent(video.id(), "INTERVIEW_HOOKS", "面试钩子",
-                summaryJson("hooks", buildInterviewHooks(segments)));
+        summaries.insertIfAbsent(video.id(), "ENGINEERING_INSIGHTS", "工程洞察",
+                summaryJson("items", buildEngineeringInsights(segments)));
     }
 
     private boolean insertCloudSummaryAssets(VideoAsset video, List<SummarySourceSegment> segments) {
@@ -941,8 +941,8 @@ public class VideoService {
                 summaryJson("items", bundle.blogOutline()), modelName, "llm-v1");
         summaries.replaceByType(video.id(), "PPT_OUTLINE", "LLM PPT 大纲",
                 summaryJson("items", bundle.pptOutline()), modelName, "llm-v1");
-        summaries.replaceByType(video.id(), "INTERVIEW_HOOKS", "LLM 面试钩子",
-                summaryJson("hooks", bundle.interviewHooks()), modelName, "llm-v1");
+        summaries.replaceByType(video.id(), "ENGINEERING_INSIGHTS", "LLM 工程洞察",
+                summaryJson("items", bundle.engineeringInsights()), modelName, "llm-v1");
         return true;
     }
 
@@ -1041,35 +1041,35 @@ public class VideoService {
         );
     }
 
-    private List<String> buildInterviewHooks(List<SummarySourceSegment> segments) {
+    private List<String> buildEngineeringInsights(List<SummarySourceSegment> segments) {
         if (segments.isEmpty()) {
             return List.of(
-                    "ASR：可展开音频质量、模型大小、VAD 与空字幕兜底",
-                    "ffmpeg：可展开抽音频、子进程超时、标准输出阻塞",
-                    "任务状态机：可展开失败重试、幂等和状态一致性"
+                    "ASR：关注音频质量、模型大小、VAD 与空字幕兜底",
+                    "ffmpeg：关注抽音频、子进程超时、标准输出阻塞",
+                    "任务状态机：关注失败重试、幂等和状态一致性"
             );
         }
 
         String lowerText = joinTranscriptText(segments).toLowerCase(Locale.ROOT);
-        List<String> hooks = new ArrayList<>();
+        List<String> insights = new ArrayList<>();
         if (containsAny(lowerText, "mysql", "my sql", "sql", "database", "status")) {
-            hooks.add("MySQL：围绕任务状态、MD5 唯一索引、事务和乐观锁展开");
+            insights.add("MySQL：任务状态、MD5 唯一索引、事务和乐观锁是关键数据边界");
         }
         if (containsAny(lowerText, "redis", "readies", "cache", "progress")) {
-            hooks.add("Redis：围绕上传进度缓存、防重复提交、热点 Key 和一致性展开");
+            insights.add("Redis：上传进度缓存、防重复提交、热点 Key 和一致性是关键性能边界");
         }
         if (containsAny(lowerText, "agent", "rag", "embedding", "vector", "answer")) {
-            hooks.add("AI Agent：围绕字幕检索、时间戳引用、召回重排和防幻觉展开");
+            insights.add("AI Agent：字幕检索、时间戳引用、召回重排和防幻觉是关键质量边界");
         }
         if (containsAny(lowerText, "thread", "queue", "dag", "async", "retry")) {
-            hooks.add("Java 并发：围绕本地 DAG、线程池参数、拒绝策略和失败重试展开");
+            insights.add("Java 并发：本地 DAG、线程池参数、拒绝策略和失败重试是关键调度边界");
         }
-        if (hooks.isEmpty()) {
-            hooks.add("ASR：围绕真实字幕生成、时间戳对齐和空结果兜底展开");
-            hooks.add("检索：围绕 video_id + start_ms 联合索引和时间轴定位展开");
-            hooks.add("后端链路：围绕上传、去重、抽音频、ASR、总结状态流转展开");
+        if (insights.isEmpty()) {
+            insights.add("ASR：真实字幕生成、时间戳对齐和空结果兜底是基础能力");
+            insights.add("检索：video_id + start_ms 联合索引支撑时间轴定位");
+            insights.add("后端链路：上传、去重、抽音频、ASR、总结状态流转形成完整闭环");
         }
-        return hooks;
+        return insights;
     }
 
     private void saveTranscriptSnapshot(long videoId, String source, String note) {

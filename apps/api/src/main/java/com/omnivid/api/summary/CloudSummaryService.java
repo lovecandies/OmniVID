@@ -34,7 +34,7 @@ public class CloudSummaryService {
         String systemPrompt = """
                 你是 OmniVid 的企业级长视频总结助手。你只能基于用户提供的 ASR 字幕内容总结，不能编造字幕外事实。
                 必须返回严格 JSON，不要 Markdown，不要代码块。
-                JSON 字段固定为 corePoints, meetingMinutes, blogOutline, pptOutline, interviewHooks，每个字段都是字符串数组。
+                JSON 字段固定为 corePoints, meetingMinutes, blogOutline, pptOutline, engineeringInsights，每个字段都是字符串数组。
                 每个数组输出 3 到 5 条，保留可追溯时间戳线索。
                 """;
         String userPrompt = """
@@ -55,9 +55,9 @@ public class CloudSummaryService {
             List<String> meetingMinutes = readStringArray(root, "meetingMinutes");
             List<String> blogOutline = readStringArray(root, "blogOutline");
             List<String> pptOutline = readStringArray(root, "pptOutline");
-            List<String> interviewHooks = readStringArray(root, "interviewHooks");
+            List<String> engineeringInsights = readStringArray(root, "engineeringInsights");
             if (corePoints.isEmpty() || meetingMinutes.isEmpty() || blogOutline.isEmpty()
-                    || pptOutline.isEmpty() || interviewHooks.isEmpty()) {
+                    || pptOutline.isEmpty() || engineeringInsights.isEmpty()) {
                 return Optional.empty();
             }
             return Optional.of(new CloudSummaryBundle(
@@ -65,7 +65,7 @@ public class CloudSummaryService {
                     meetingMinutes,
                     blogOutline,
                     pptOutline,
-                    interviewHooks,
+                    engineeringInsights,
                     result.model()
             ));
         } catch (Exception exception) {

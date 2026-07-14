@@ -1,172 +1,148 @@
 # OmniVid
 
-OmniVid 是一个面向 Java 后端开发和 AI Agent 求职展示的长视频语义解析项目。它把“长视频上传、去重、异步解析、字幕时间轴、结构化总结、跨视频问答”串成一条可演示的工程链路，同时把 MySQL、Redis、JVM、并发、Spring、RAG、向量数据库等面试高频考点埋进真实业务场景里。
+OmniVid is a full-stack long-video understanding platform for learning videos, meeting recordings and knowledge review workflows. It turns uploaded videos or public video URLs into searchable transcripts, structured summaries, timestamped evidence and multi-video RAG answers.
 
-当前项目已经从前端 mock 演进为前后端真实联调版本：本地视频上传后，后端会保存文件、计算 MD5、创建解析任务、抽取音频、执行 ASR、生成字幕和总结，并支持带时间戳引用的 Agent 问答。
+The project focuses on the engineering problems behind long-video AI applications: large-file upload reliability, long-running media processing, idempotent task recovery, model-call cost control, traceable answers and production-style diagnostics.
 
-## Version 2.0
+## Highlights
 
-OmniVid 2.0 已完成工程化收束：在 1.0 的视频解析和 Agent 闭环上，新增 Provider Key 加密轮换、分片上传、ASR+OCR 默认融合、字幕版本回流、多视频知识库、外部 Embedding/Rerank 管理、MySQL Outbox + RocketMQ、真实 Markdown/DOCX/PPTX 导出、完整 Docker/CI 和跨消息 Trace。
+- Chunked upload, resumable transfer, MD5 instant reuse and duplicate-video protection.
+- MySQL-backed video assets, processing jobs, transcript segments, summaries, chat records and outbox events.
+- Redis-backed dedupe locks, progress cache, rate limiting, answer cache and short-term Agent memory.
+- MySQL Outbox + RocketMQ dispatch for reliable asynchronous video-processing tasks.
+- ffprobe/ffmpeg + Whisper.cpp pipeline for audio extraction, normalization, VAD trimming and ASR transcription.
+- Qdrant-backed video RAG Agent with retrieval, rerank, timestamped citations and trace steps.
+- Markdown, DOCX and PPTX export based on transcript evidence and structured summaries.
+- Runtime inspectors for MySQL, Redis, RocketMQ, vector index, ASR artifacts, SSE and JVM thread pools.
 
-2.0 正式文档中心见 [docs/v2.0/README.md](docs/v2.0/README.md)，其中包含：
+## Architecture
 
-- [发布说明](docs/v2.0/release-notes.md)
-- [技术架构](docs/v2.0/technical-architecture.md)
-- [功能实现地图](docs/v2.0/feature-implementation-map.md)
-- [面试主叙事与技术钩子](docs/v2.0/interview-pack.md)
-- [完整面试题库](docs/v2.0/full-interview-question-bank.md)
-- [续作交接备份](docs/v2.0/continuation-backup.md)
+```mermaid
+flowchart LR
+    User["Web Client"] --> API["Spring Boot API"]
+    API --> MySQL["MySQL\nassets, jobs, transcripts, outbox"]
+    API --> Redis["Redis\nlocks, progress, cache, rate limits"]
+    API --> MQ["RocketMQ\nasync dispatch"]
+    MQ --> Worker["Processing Worker"]
+    Worker --> FFmpeg["ffprobe / ffmpeg"]
+    Worker --> ASR["Whisper.cpp"]
+    Worker --> LLM["LLM Provider"]
+    Worker --> Qdrant["Qdrant Vector Store"]
+    API --> Export["Markdown / DOCX / PPTX"]
+    API --> Agent["RAG Agent\ncitations + trace"]
+    Agent --> Qdrant
+    Agent --> MySQL
+```
 
-Version 1.0 的发布文档、面试文档和会话备份继续保留在 [docs/v1.0/README.md](docs/v1.0/README.md)，旧历史不会被覆盖。
+## Tech Stack
 
-## 当前成果
+| Layer | Stack |
+| --- | --- |
+| Backend | Java 21, Spring Boot 3, Maven |
+| Data | MySQL 8, Redis 7, Qdrant |
+| Messaging | RocketMQ, MySQL Outbox |
+| AI / Media | Whisper.cpp, ffmpeg, ffprobe, OpenAI-compatible LLM providers |
+| Frontend | React, Vite, TypeScript, lucide-react |
+| Infrastructure | Docker Compose, Caddy, Nginx, GitHub Actions |
 
-| 模块 | 状态 | 可见效果 |
-| --- | --- | --- |
-| 前端工作台 | 已实现 | 暗色响应式工作台，支持上传、视频库、字幕、总结、Agent 问答和运行时检查面板 |
-| 本地视频上传 | 已实现 | 真实文件上传到后端，保存到本地存储目录并计算 MD5 |
-| MD5 去重 | 已实现 | 重复视频复用已有资产，Redis/本地锁防抖，MySQL 唯一索引兜底 |
-| 异步解析 DAG | 已实现 | 上传后后台执行解析任务，前端展示阶段和进度 |
-| ffprobe/ffmpeg + VAD | 已实现 | 识别视频时长，保留 `audio-raw.wav`，裁剪 `audio.wav` / `audio-vad.wav` 供 ASR 只转写有效人声片段 |
-| whisper.cpp ASR | 已实现 | 基于 VAD 短音频转写，并通过 `audio-vad-map.json` 映射回原视频时间轴 |
-| 视频播放 | 已实现 | 支持 Range 播放上传视频 |
-| 字幕点击跳转 | 已实现 | 点击字幕可跳到播放器对应时间点 |
-| 播放同步字幕 | 已实现 | 播放或拖动进度时高亮当前字幕 |
-| 结构化总结 | 已实现 | 基于 ASR 生成核心观点、会议纪要、博客大纲、PPT 大纲和面试钩子 |
-| 真实文件导出 | 已实现 | 基于字幕与总结调用 DeepSeek 扩写，生成可下载的 Markdown、DOCX 和 PPTX |
-| DeepSeek Chat | 已实现 | 前端可保存并启用 DeepSeek API Key，总结和 Agent 可调用云端 LLM |
-| 当前视频 Agent | 已实现 | 针对当前视频提问，返回回答、执行轨迹和可点击时间戳引用 |
-| 默认知识库 Agent | 已实现 | 跨已上传视频检索字幕并回答 |
-| MySQL 模式 | 已实现 | Docker profile 下视频、任务、字幕、总结、聊天记录落 MySQL |
-| Redis 模式 | 已实现 | 处理防重锁、进度缓存、限流、语义缓存和短期记忆 |
-| Qdrant 向量库 | 已实现 MVP | 字幕向量写入 Qdrant，支持向量召回和 rerank trace |
-| RocketMQ 可靠异步 | 已实现 | MySQL Outbox 可靠投递、重复消费幂等、失败重试、DLQ 和人工重投 |
-| Docker 完整部署 | 已实现 | `app` profile 一键拉起 Web、API、MySQL、Redis、Qdrant 和 RocketMQ |
-| 结构化日志与 Trace | 已实现 | JSON 日志和 `X-Trace-Id` 串联 HTTP、Outbox、RocketMQ Consumer 与解析 DAG |
-| SSE 实时进度 | 已实现 | 前端通过长连接观察任务状态变化 |
-| 失败任务恢复 | 已实现 | 可查看失败任务并重新投递解析 |
-| 运行时检查面板 | 已实现 | MySQL、Redis、JVM 线程池、SSE、Retrieval、Vector Store 可观测 |
-| 平台 URL 导入 | MVP 已实现 | B站/抖音/小红书公开链接通过 `yt-dlp` 复用解析链路，受平台反爬和 Cookie 影响 |
-| URL 导入诊断 | 已实现 | B站 412、403、Cookie 缺失、yt-dlp 缺失、ffmpeg 合并失败会返回 `message/suggestion/detail` |
-| ASR 诊断面板 | 已实现 | 当前视频可查看模型文件、`audio.wav`、`audio-vad.wav`、VAD 映射、`asr.json`、字幕条数和日志摘要 |
-| RAG 检索过滤 Trace | 已实现 | Retrieval Inspector 展示 candidates、usable、top hit、citations、rejected 和 strict filter |
-| 任务重试边界 | 已实现 | 只有最新 FAILED job 允许补偿重试；DONE/RUNNING 误重试返回结构化建议 |
+## Quick Start
 
-## 当前边界
-
-- 浏览器插件暂未实现。
-- DeepSeek 当前主要接 Chat Completions；其 Embeddings 接口不可用时，项目会降级为本地 hash embedding，但向量仍写入 Qdrant。
-- URL 导入对平台反爬敏感，B站 HTTP 412 等场景需要 Cookie 或浏览器登录态支持。
-- 登录、多租户、计费、企业权限暂未实现，当前固定为 demo 用户，计划放入 2.1+。
-- 外部 Embedding/Rerank 管理链路已完成，但必须配置真实服务才能取代 `local-hash` / `local-rerank`。
-
-## 技术栈
-
-- 后端：Java、Spring Boot 3、JDBC/MyBatis 风格 Repository、Maven
-- 数据库：MySQL 8.4、Redis 7.4、Qdrant
-- AI 链路：DeepSeek Chat、whisper.cpp、ffmpeg、ffprobe、RAG、Agent trace
-- 前端：React、Vite、TypeScript、lucide-react
-- 基础设施：Docker Compose、SSE、HTTP Range、本地文件存储
-
-完整 Docker 复现：
+Start the full local environment:
 
 ```powershell
 cd E:\video
 .\scripts\start-full-docker.ps1
 ```
 
-成功后访问 `http://127.0.0.1:5174`，API Runtime 位于 `http://127.0.0.1:8080/api/runtime/status`。
+Open:
 
-## 本地启动
+```text
+http://127.0.0.1:5174
+```
 
-启动基础设施：
+Health check:
+
+```text
+http://127.0.0.1:8080/api/health
+```
+
+For infrastructure-only development:
 
 ```powershell
 cd E:\video\infra
 docker compose up -d
-```
 
-启动后端：
-
-```powershell
 cd E:\video\apps\api
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=docker"
-```
 
-启动前端：
-
-```powershell
 cd E:\video\apps\web
 npm run dev -- --host 127.0.0.1
 ```
 
-访问：
+## Core Workflow
+
+1. Upload a local video or import a public video URL.
+2. Create or reuse a video asset through MD5 deduplication.
+3. Dispatch processing asynchronously through local DAG or RocketMQ mode.
+4. Extract and normalize audio with ffmpeg, then transcribe it with Whisper.cpp.
+5. Persist timestamped transcript segments and structured summaries.
+6. Build vector indexes in Qdrant for video-grounded RAG.
+7. Ask questions against a single video or a multi-video knowledge base.
+8. Export grounded reports as Markdown, DOCX or PPTX.
+
+## Engineering Results
+
+Representative local benchmark data:
+
+| Capability | Result |
+| --- | --- |
+| Large video upload | 139 MB / 76 min video split into 27 chunks at 5 MB each |
+| Duplicate upload reuse | Repeated upload hit MD5 reuse in 134 ms |
+| Upload-to-job decoupling | Merge and job creation returned in 1.24 s while processing continued asynchronously |
+| Long-video processing | 76 min video completed offline parsing in about 798 s |
+| Audio pipeline | ffmpeg audio extraction about 136 s; Whisper.cpp transcription about 464.6 s |
+| VAD optimization | Short-pause sample reduced invalid audio by about 11.9% |
+| Agent cache | Same-question cache hit reduced response time from 234 ms to 39 ms |
+
+## Repository Layout
 
 ```text
-http://127.0.0.1:5173
+apps/api      Spring Boot backend
+apps/web      React + Vite frontend
+infra         Docker Compose, Caddy, Nginx and RocketMQ config
+scripts       Local startup, CI and production helper scripts
+docs          Public architecture and deployment documentation
 ```
 
-## 黑盒验证
+## Documentation
 
-1. 上传本地视频 -> 验证: 页面出现新视频、任务进度从上传进入音频抽取、ASR、总结生成，最终字幕和总结加载出来。
-2. 点击字幕 -> 验证: 播放器跳转到字幕对应时间，播放时字幕高亮跟随变化。
-3. 配置 DeepSeek -> 验证: 在页面保存 API Key 后，连接测试通过，Runtime 面板显示 LLM 可用。
-4. 向 Agent 提问视频内容 -> 验证: 回答带来源视频和时间戳引用，点击引用能定位播放器。
-5. 提问视频未提到的问题 -> 验证: Agent 先说明视频或知识库没有检索到相关字幕，再调用 DeepSeek 给出通用回答。
-6. 打开检查面板 -> 验证: MySQL 索引、Redis Key、线程池、SSE、Retrieval、Qdrant 状态均可观察。
-7. 重复上传同一视频 -> 验证: 页面显示命中去重，MySQL 中不会重复创建同一 MD5 视频资产。
-8. 粘贴无法解析的平台链接 -> 验证: URL 导入错误展示建议和日志摘要，例如 Cookie 登录态、yt-dlp 更新或 ffmpeg 配置。
-9. 选择已解析视频 -> 验证: ASR Diagnostic 面板显示模型、音频、ASR JSON、字幕行数和日志尾巴。
-10. 向知识库 Agent 提问 -> 验证: Retrieval Inspector 展示宽召回候选、rerank 后证据、严格引用过滤和 rejected 数量。
-11. 对 DONE 视频点击重试 -> 验证: 后端返回 409，并说明已完成任务不进入补偿队列；对 FAILED 视频重试会创建新的 retry job。
+- [Architecture](docs/architecture.md)
+- [Deployment](docs/deployment.md)
+- [Benchmarks](docs/benchmarks.md)
+- [API Notes](docs/api.md)
+- [Infrastructure](infra/README.md)
+- [Backend](apps/api/README.md)
 
-## 面试主叙事
+## Verification
 
-一句话介绍：
+```powershell
+cd E:\video\apps\api
+.\mvnw.cmd test
 
-> OmniVid 是一个 Java 后端主导的长视频 AI 知识解析系统，我用 Spring Boot 跑通了从大文件上传、MD5 去重、异步解析、ffmpeg/ASR、字幕时间轴、结构化总结到可追溯 Agent 问答的一整条链路。MySQL 负责最终事实和状态一致性，Redis 负责防重、进度缓存、限流和短期记忆，Qdrant 负责字幕向量检索，Agent 通过检索工具和时间戳引用降低幻觉。
+cd E:\video\apps\web
+npm run build
 
-遇到八股追问时，可以这样回到业务：
+cd E:\video
+docker compose -f infra\docker-compose.yml --profile app config --quiet
+```
 
-- MySQL：视频 MD5 唯一索引、任务状态机、乐观锁、字幕联合索引、深分页优化。
-- Redis：`SETNX` 防重锁、进度缓存、限流、语义缓存、短期记忆、缓存一致性。
-- Java 并发：本地 DAG、线程池参数、拒绝策略、异步异常处理、任务重试。
-- JVM：大文件上传避免 OOM、字幕切片对象生命周期、GC 日志、`jmap`/`jstack` 排查。
-- Spring：统一异常、AOP 日志、事务传播、`@Transactional` 失效、策略路由。
-- MQ：MySQL Outbox + RocketMQ 可靠异步，讲投递一致性、重复消费、重试退避、DLQ、幂等和跨消息 Trace。
-- 网络/OS：SSE 长连接、HTTP Range、ffmpeg 子进程、标准输出阻塞、顺序 IO。
-- AI Agent：RAG、Embedding、向量召回、rerank、工具调用、引用约束和低置信度处理。
-- URL 导入：`yt-dlp` 子进程、平台反爬、HTTP 412、Cookie 登录态、失败诊断和降级提示。
-- ASR 诊断：模型文件、音频抽取产物、JSON 输出、日志摘要、空字幕兜底和子进程超时。
-- 任务补偿：FAILED 才能 retry，DONE 走 MD5 复用，RUNNING 依赖 SSE，避免状态机重复推进。
+## Security Notes
 
-## 简历钩子
+- Provider API keys are stored encrypted and masked in API responses.
+- Production startup validates strong secrets, HTTPS public URLs and admin emails.
+- Runtime diagnostic endpoints require authenticated admin access.
+- Generated videos, transcripts, logs, backups and local model binaries are excluded from the public repository.
 
-- 基于 Spring Boot 构建长视频解析工作台，完成本地视频上传、MD5 去重、异步解析任务、ASR 字幕、结构化总结和视频时间轴跳转。
-- 基于 MySQL 设计视频资产、解析任务、字幕片段、总结资产和聊天记录模型，通过唯一索引、联合索引和乐观锁保证幂等与状态一致性。
-- 基于 Redis 实现上传防重复提交、任务进度缓存、Agent 限流、语义缓存和短期记忆，降低重复解析与重复推理成本。
-- 使用 Java 线程池实现轻量 DAG 解析流水线，并对 ffmpeg、ASR、总结生成等长耗时节点做状态流转、失败记录和重试恢复。
-- 接入 DeepSeek Chat 和 Qdrant，构建带工具调用和执行轨迹的 Agent 问答链路，支持跨视频字幕检索、可点击时间戳引用和无证据通用回答兜底。
-- 建设 URL/ASR/RAG/Recovery 多个 Inspector 面板，将平台导入失败、ASR 产物、向量召回过滤和任务补偿状态转化为可观测、可演示、可面试追问的工程证据。
+## License
 
-## 文档索引
-
-- [项目蓝图](CODEX.md)
-- [求职型架构](docs/01-career-architecture.md)
-- [MySQL/Redis 技术钩子](docs/02-mysql-redis-hooks.md)
-- [后端 Agent 面试打法](docs/03-backend-agent-playbook.md)
-- [全技术栈八股映射](docs/04-interview-hook-map.md)
-- [MySQL 面试钩子手册](docs/05-mysql-interview-hooks.md)
-- [已实现功能技术文档](docs/06-implemented-features-tech-doc.md)
-- [Redis 面试钩子手册](docs/06-redis-interview-hooks.md)
-- [Java 并发与线程池手册](docs/07-java-concurrency-interview-hooks.md)
-- [Spring 事务手册](docs/08-spring-transaction-interview-hooks.md)
-- [AI Agent RAG 手册](docs/09-ai-agent-rag-interview-hooks.md)
-- [任务失败恢复手册](docs/10-task-retry-interview-hooks.md)
-
-
-## 备份与 GitHub
-
-- 会话恢复文件已保留在仓库根目录：`codex-session-019eb1b9-full-chat.md`、`codex-session-019eb1b9-index.md`、`codex-session-019eb1b9-recovered-chat.md`、`codex-session-019eb1b9-tool-timeline.md`。
-- `backups/` 和 `备份/` 继续保持本地，不作为公开 GitHub 产物直接提交。
-- 断点恢复与版本基线请看 `docs/v2.0/continuation-backup.md`，本地备份清单请看 `docs/v2.0/local-backup-manifest.md`。
+MIT

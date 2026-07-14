@@ -476,7 +476,7 @@ public class AgentService {
     }
 
     private AgentAskResponse greetingVideoResponse(long videoId, String question) {
-        String answer = "你好，我是 OmniVid 的证据约束视频问答 Agent。你可以问当前视频里出现过的内容，比如“这段视频讲了什么”“有哪些 MySQL/Redis 钩子”“引用来自哪个时间点”。涉及视频事实时，我会先找字幕证据，再返回可点击的时间戳引用。";
+        String answer = "你好，我是 OmniVid 的证据约束视频问答 Agent。你可以问当前视频里出现过的内容，比如“这段视频讲了什么”“有哪些 MySQL/Redis 工程证据”“引用来自哪个时间点”。涉及视频事实时，我会先找字幕证据，再返回可点击的时间戳引用。";
         chatMessages.insert(videoId, "user", question, null);
         chatMessages.insert(videoId, "assistant", answer, null);
         return new AgentAskResponse(
@@ -496,7 +496,7 @@ public class AgentService {
     }
 
     private AgentAskResponse greetingKnowledgeBaseResponse() {
-        String answer = "你好，我是 OmniVid 的默认知识库 Agent。你可以问已上传视频里共同提到的主题、某个技术点在哪些视频出现过，或者让帮你整理可追溯的面试钩子。涉及视频事实时，我会先检索字幕证据，再返回来源视频和时间戳。";
+        String answer = "你好，我是 OmniVid 的默认知识库 Agent。你可以问已上传视频里共同提到的主题、某个技术点在哪些视频出现过，或者让我整理可追溯的工程洞察。涉及视频事实时，我会先检索字幕证据，再返回来源视频和时间戳。";
         return new AgentAskResponse(
                 answer,
                 "",
@@ -514,7 +514,7 @@ public class AgentService {
     }
 
     private AgentAskResponse agentIntroVideoResponse(long videoId, String question) {
-        String answer = "我是 OmniVid 的视频语义问答 Agent，主要负责把当前视频的 ASR 字幕、总结和时间轴引用串起来。你可以问我三类问题：第一，当前视频讲了什么；第二，某个 Java 后端或 AI Agent 面试钩子在视频哪个时间点出现；第三，围绕已命中的字幕证据继续追问。涉及视频事实时，我会先检索字幕证据，命中后调用已激活的云端 LLM 解释这段视频并返回可追溯时间戳；没有命中时，我会先说明视频里没有检索到相关内容，再用云端 LLM 给出通用回答。像自我介绍这类元问题不需要视频证据，所以我会直接回答，不消耗 LLM token。";
+        String answer = "我是 OmniVid 的视频语义问答 Agent，主要负责把当前视频的 ASR 字幕、总结和时间轴引用串起来。你可以问我三类问题：第一，当前视频讲了什么；第二，某个技术点在视频哪个时间点出现；第三，围绕已命中的字幕证据继续追问。涉及视频事实时，我会先检索字幕证据，命中后调用已激活的云端 LLM 解释这段视频并返回可追溯时间戳；没有命中时，我会先说明视频里没有检索到相关内容，再用云端 LLM 给出通用回答。像自我介绍这类元问题不需要视频证据，所以我会直接回答，不消耗 LLM token。";
         chatMessages.insert(videoId, "user", question, null);
         chatMessages.insert(videoId, "assistant", answer, null);
         return new AgentAskResponse(
@@ -534,7 +534,7 @@ public class AgentService {
     }
 
     private AgentAskResponse agentIntroKnowledgeBaseResponse() {
-        String answer = "我是 OmniVid 的默认知识库问答 Agent，负责在所有已上传视频的字幕里做跨视频检索，并把回答绑定到来源视频和时间戳。你可以让我找某个技术点在哪些视频里出现过，也可以让我把 MySQL、Redis、并发、JVM、Spring、MQ、RAG 等面试钩子整理成可追溯回答。涉及视频事实时，我会先拿到 citation，再调用已激活的云端 LLM 做表达整理；没有证据时会先说明知识库视频未提到，再用云端 LLM 给出通用回答。";
+        String answer = "我是 OmniVid 的默认知识库问答 Agent，负责在所有已上传视频的字幕里做跨视频检索，并把回答绑定到来源视频和时间戳。你可以让我找某个技术点在哪些视频里出现过，也可以让我把 MySQL、Redis、并发、JVM、Spring、MQ、RAG 等工程主题整理成可追溯回答。涉及视频事实时，我会先拿到 citation，再调用已激活的云端 LLM 做表达整理；没有证据时会先说明知识库视频未提到，再用云端 LLM 给出通用回答。";
         return new AgentAskResponse(
                 answer,
                 "",

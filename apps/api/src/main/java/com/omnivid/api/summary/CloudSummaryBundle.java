@@ -7,7 +7,7 @@ public record CloudSummaryBundle(
         List<String> meetingMinutes,
         List<String> blogOutline,
         List<String> pptOutline,
-        List<String> interviewHooks,
+        List<String> engineeringInsights,
         String modelName
 ) {
 }
