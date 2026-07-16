@@ -1,0 +1,18 @@
+<svg width="1600" height="360" viewBox="0 0 1600 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="360" rx="18" fill="#101113"/>
+  <rect x="38" y="38" width="1524" height="284" rx="14" fill="#161719" stroke="#2F3437" stroke-width="2"/>
+  <path d="M0 252H1600V360H0V252Z" fill="#0D171A"/>
+  <path d="M80 64H1520" stroke="#FFD44D" stroke-width="3" stroke-dasharray="12 20" opacity="0.7"/>
+  <path d="M80 296H1520" stroke="#9FE870" stroke-width="3" stroke-dasharray="12 20" opacity="0.55"/>
+  <g opacity="0.18">
+    <circle cx="1320" cy="96" r="170" fill="#FFD44D"/>
+    <circle cx="244" cy="292" r="180" fill="#34D399"/>
+  </g>
+  <g>
+    <text x="798" y="148" text-anchor="middle" font-family="Impact, Haettenschweiler, 'Arial Black', sans-serif" font-size="118" letter-spacing="6" fill="#FFD21E">OMNIVID</text>
+    <text x="804" y="155" text-anchor="middle" font-family="Impact, Haettenschweiler, 'Arial Black', sans-serif" font-size="118" letter-spacing="6" fill="none" stroke="#5B4200" stroke-width="2" opacity="0.65">OMNIVID</text>
+    <rect x="284" y="170" width="1032" height="18" fill="#C57D2D" opacity="0.95"/>
+    <text x="800" y="236" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" letter-spacing="9" fill="#F5F7FA">LONG VIDEO AI KNOWLEDGE PLATFORM</text>
+    <text x="800" y="278" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" letter-spacing="4" fill="#9FE870">UPLOAD · ASR · RAG · AGENT · EXPORT · OBSERVABILITY</text>
+  </g>
+</svg>
